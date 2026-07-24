@@ -113,6 +113,19 @@ begin
 end;
 $$;
 
+-- ---------- helper: sou superadmin? ----------
+-- SECURITY DEFINER + dono da tabela = bypassa RLS internamente. Isso é essencial:
+-- uma policy da própria tabela "profiles" NUNCA pode fazer um subselect cru em
+-- "profiles" (causa recursão infinita) — tem que passar por uma função assim.
+create function public.is_superadmin()
+returns boolean
+language sql
+security definer set search_path = public
+stable
+as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'superadmin');
+$$;
+
 -- ---------- helper: sou admin (local ou superadmin) deste acesso? ----------
 create function public.is_acesso_admin(p_acesso_id uuid)
 returns boolean
@@ -120,9 +133,7 @@ language sql
 security definer set search_path = public
 stable
 as $$
-  select exists (
-    select 1 from public.profiles where id = auth.uid() and role = 'superadmin'
-  ) or exists (
+  select public.is_superadmin() or exists (
     select 1 from public.acesso_membros
     where acesso_id = p_acesso_id and user_id = auth.uid() and is_admin_local = true
   );
@@ -142,33 +153,33 @@ alter table public.recentes enable row level security;
 create policy "profiles_select_own_or_superadmin" on public.profiles
   for select using (
     id = auth.uid()
-    or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'superadmin')
+    or public.is_superadmin()
   );
 create policy "profiles_update_superadmin" on public.profiles
-  for update using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'superadmin'));
+  for update using (public.is_superadmin());
 
 create policy "acessos_select_members_or_superadmin" on public.acessos
   for select using (
     exists (select 1 from public.acesso_membros am where am.acesso_id = acessos.id and am.user_id = auth.uid())
-    or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'superadmin')
+    or public.is_superadmin()
   );
 create policy "acessos_write_superadmin" on public.acessos
-  for all using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'superadmin'))
-  with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'superadmin'));
+  for all using (public.is_superadmin())
+  with check (public.is_superadmin());
 
 create policy "acesso_membros_select_own_or_superadmin" on public.acesso_membros
   for select using (
     user_id = auth.uid()
-    or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'superadmin')
+    or public.is_superadmin()
   );
 create policy "acesso_membros_write_superadmin" on public.acesso_membros
-  for all using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'superadmin'))
-  with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'superadmin'));
+  for all using (public.is_superadmin())
+  with check (public.is_superadmin());
 
 create policy "categorias_select_members" on public.categorias
   for select using (
     exists (select 1 from public.acesso_membros am where am.acesso_id = categorias.acesso_id and am.user_id = auth.uid())
-    or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'superadmin')
+    or public.is_superadmin()
   );
 create policy "categorias_write_admins" on public.categorias
   for all using (public.is_acesso_admin(acesso_id))
@@ -177,7 +188,7 @@ create policy "categorias_write_admins" on public.categorias
 create policy "mensagens_select_members" on public.mensagens
   for select using (
     exists (select 1 from public.acesso_membros am where am.acesso_id = mensagens.acesso_id and am.user_id = auth.uid())
-    or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'superadmin')
+    or public.is_superadmin()
   );
 create policy "mensagens_write_admins" on public.mensagens
   for all using (public.is_acesso_admin(acesso_id))
@@ -188,6 +199,23 @@ create policy "favoritos_own" on public.favoritos
 
 create policy "recentes_own" on public.recentes
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- ============================================================
+-- Hardening de EXECUTE — funções SECURITY DEFINER não devem ficar
+-- expostas via /rest/v1/rpc/ para PUBLIC (que anon/authenticated herdam
+-- por padrão). Restringe cada uma ao mínimo necessário.
+-- ============================================================
+revoke execute on function public.handle_new_user() from public;
+-- ninguém precisa chamar isso diretamente — só o trigger a usa.
+
+revoke execute on function public.increment_frequencia(uuid) from public;
+grant execute on function public.increment_frequencia(uuid) to authenticated;
+
+revoke execute on function public.is_acesso_admin(uuid) from public;
+grant execute on function public.is_acesso_admin(uuid) to authenticated;
+
+revoke execute on function public.is_superadmin() from public;
+grant execute on function public.is_superadmin() to authenticated;
 
 -- ============================================================
 -- SEED — acesso, categorias e mensagens do protótipo
