@@ -200,8 +200,8 @@ class App {
         onLoginPasswordChange: (e) => this.setState({ loginPassword: e.target.value }),
         handleLogin: () => this.handleLogin(),
         onLoginKeyDown: (e) => { if (e.key === 'Enter') this.handleLogin(); },
-        fillUserDemo: () => this.setState({ loginEmail: 'relacionamento@dentalplus', loginPassword: 'Dental123', loginError: '' }),
-        fillAdminDemo: () => this.setState({ loginEmail: 'admin@dentalplus', loginPassword: 'Dental@1234', loginError: '' }),
+        fillUserDemo: () => this.setState({ loginEmail: 'relacionamento@dentalplus-sorria.com.br', loginPassword: 'Dental123', loginError: '' }),
+        fillAdminDemo: () => this.setState({ loginEmail: 'admin@dentalplus-sorria.com.br', loginPassword: 'Dental@1234', loginError: '' }),
         noop: (e) => e.preventDefault(),
         confirm: st.confirm, toast: st.toast,
         showMsgModal: false, showCatModal: false, showAcessoModal: false, showUsersModal: false
