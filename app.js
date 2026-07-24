@@ -16,7 +16,7 @@ class App {
       loading: true,
       loadError: '',
       darkMode: false,
-      density: 'comfortable',
+      density: 'compact',
       currentUser: null,     // { user, profile } from api.getSession()
       profileId: null,
       activeAcessoId: null,
@@ -92,7 +92,6 @@ class App {
   async mount() {
     try {
       const dm = localStorage.getItem('dp_darkmode'); if (dm) this.state.darkMode = dm === '1';
-      const den = localStorage.getItem('dp_density'); if (den) this.state.density = den;
     } catch (e) {}
 
     this.render();
@@ -350,10 +349,6 @@ class App {
       onSearchChange: (e) => this.setState({ searchQuery: e.target.value }),
       shortcutLabel: /Mac|iPhone|iPod|iPad/i.test(navigator.platform || '') ? '⌘K' : 'Ctrl K',
 
-      densityComfortableBg: density === 'comfortable' ? theme.pageBg : 'transparent',
-      densityCompactBg: density === 'compact' ? theme.pageBg : 'transparent',
-      setDensityComfortable: () => { this.setState({ density: 'comfortable' }); try { localStorage.setItem('dp_density', 'comfortable'); } catch (e) {} },
-      setDensityCompact: () => { this.setState({ density: 'compact' }); try { localStorage.setItem('dp_density', 'compact'); } catch (e) {} },
       darkModeIcon: st.darkMode ? '☀' : '☾',
       toggleDarkMode: () => { const val = !st.darkMode; this.setState({ darkMode: val }); try { localStorage.setItem('dp_darkmode', val ? '1' : '0'); } catch (e) {} },
 
@@ -559,8 +554,6 @@ class App {
           <div style="position:absolute; right:12px; top:50%; transform:translateY(-50%); font-size:11px; font-weight:700; color:${t.textSecondary}; background:${t.pageBg}; border:1px solid ${t.border}; padding:3px 8px; border-radius:6px;">${esc(v.shortcutLabel)}</div>
         </div>
         <div style="display:flex; align-items:center; gap:10px; margin-left:auto;">
-          <button data-click="${H(v.setDensityComfortable)}" title="Confortável" style="width:34px; height:34px; border-radius:8px; border:1px solid ${t.border}; background:${v.densityComfortableBg}; color:${t.text}; cursor:pointer; font-size:15px;">☰</button>
-          <button data-click="${H(v.setDensityCompact)}" title="Compacta" style="width:34px; height:34px; border-radius:8px; border:1px solid ${t.border}; background:${v.densityCompactBg}; color:${t.text}; cursor:pointer; font-size:15px;">▤</button>
           <button data-click="${H(v.toggleDarkMode)}" title="Alternar tema" style="width:34px; height:34px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; cursor:pointer; font-size:15px;">${v.darkModeIcon}</button>
           <div style="position:relative;">
             <div data-click="${H(v.toggleUserMenu)}" style="display:flex; align-items:center; gap:8px; cursor:pointer; padding:6px 10px; border-radius:10px; border:1px solid ${t.border};">
