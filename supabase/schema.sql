@@ -194,11 +194,32 @@ create policy "mensagens_write_admins" on public.mensagens
   for all using (public.is_acesso_admin(acesso_id))
   with check (public.is_acesso_admin(acesso_id));
 
+-- with check valida também que a mensagem referenciada pertence a um acesso do
+-- qual o usuário é membro — sem isso, dava para inserir um favorito/recente
+-- apontando para o UUID de uma mensagem de outro acesso (não vaza conteúdo,
+-- pois a leitura continua bloqueada pelo RLS de "mensagens", mas é uma
+-- referência indevida que não deveria ser permitida).
 create policy "favoritos_own" on public.favoritos
-  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+  for all using (user_id = auth.uid())
+  with check (
+    user_id = auth.uid()
+    and exists (
+      select 1 from public.mensagens m
+      join public.acesso_membros am on am.acesso_id = m.acesso_id
+      where m.id = mensagem_id and am.user_id = auth.uid()
+    )
+  );
 
 create policy "recentes_own" on public.recentes
-  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+  for all using (user_id = auth.uid())
+  with check (
+    user_id = auth.uid()
+    and exists (
+      select 1 from public.mensagens m
+      join public.acesso_membros am on am.acesso_id = m.acesso_id
+      where m.id = mensagem_id and am.user_id = auth.uid()
+    )
+  );
 
 -- ============================================================
 -- Hardening de EXECUTE — funções SECURITY DEFINER não devem ficar

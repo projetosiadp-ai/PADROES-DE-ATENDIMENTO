@@ -61,12 +61,22 @@ Deno.serve(async (req) => {
     }
 
     if (role === "superadmin") {
-      await adminClient.from("profiles").update({ role: "superadmin" }).eq("id", created.user.id);
+      const { error: roleErr } = await adminClient.from("profiles").update({ role: "superadmin" }).eq("id", created.user.id);
+      if (roleErr) {
+        return new Response(JSON.stringify({ error: `Usuário criado, mas falhou ao definir papel: ${roleErr.message}` }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
-    await adminClient.from("acesso_membros").insert({
+    const { error: linkErr } = await adminClient.from("acesso_membros").insert({
       acesso_id: acessoId, user_id: created.user.id, is_admin_local: !!isAdminLocal,
     });
+    if (linkErr) {
+      return new Response(JSON.stringify({ error: `Usuário criado, mas falhou ao vincular ao acesso: ${linkErr.message}` }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     return new Response(JSON.stringify({ ok: true, userId: created.user.id }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
