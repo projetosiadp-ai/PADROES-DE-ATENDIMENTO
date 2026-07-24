@@ -99,7 +99,7 @@ class App {
 
     api.onAuthChange(async (session) => {
       if (!session) {
-        this.setState({ currentUser: null, profileId: null, loading: false });
+        this.setState({ currentUser: null, profileId: null, loading: false, appView: 'dashboard', adminTab: 'mensagens' });
         return;
       }
       await this.loadSessionAndData();
@@ -326,7 +326,7 @@ class App {
     return {
       isLogin: false, isApp: true, isLoading: false, theme,
       appView: st.appView || 'dashboard',
-      isDashboard: (st.appView || 'dashboard') === 'dashboard', isAdminView: st.appView === 'admin',
+      isDashboard: !(st.appView === 'admin' && isAdmin), isAdminView: st.appView === 'admin' && isAdmin,
       adminTab: st.adminTab || 'mensagens',
       isAdminMsgs: (st.adminTab || 'mensagens') === 'mensagens', isAdminCats: st.adminTab === 'categorias', isAdminAcessos: st.adminTab === 'acessos',
       tabMsgsBg: (st.adminTab || 'mensagens') === 'mensagens' ? theme.navy : 'transparent', tabMsgsColor: (st.adminTab || 'mensagens') === 'mensagens' ? '#fff' : theme.text,
