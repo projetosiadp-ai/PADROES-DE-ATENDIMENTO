@@ -200,8 +200,6 @@ class App {
         onLoginPasswordChange: (e) => this.setState({ loginPassword: e.target.value }),
         handleLogin: () => this.handleLogin(),
         onLoginKeyDown: (e) => { if (e.key === 'Enter') this.handleLogin(); },
-        fillUserDemo: () => this.setState({ loginEmail: 'relacionamento@dentalplus-sorria.com.br', loginPassword: 'Dental123', loginError: '' }),
-        fillAdminDemo: () => this.setState({ loginEmail: 'admin@dentalplus-sorria.com.br', loginPassword: 'Dental@1234', loginError: '' }),
         noop: (e) => e.preventDefault(),
         confirm: st.confirm, toast: st.toast,
         showMsgModal: false, showCatModal: false, showAcessoModal: false, showUsersModal: false
@@ -524,13 +522,6 @@ class App {
           </div>
           <div style="display:flex; justify-content:space-between; margin-top:16px;">
             <a href="#" data-click="${H(v.noop)}" style="font-size:13px; color:${t.cyan}; text-decoration:none; font-weight:600;">Esqueci minha senha</a>
-          </div>
-          <div style="margin-top:28px; padding-top:20px; border-top:1px solid ${t.border};">
-            <div style="font-size:12px; color:${t.textSecondary}; margin-bottom:10px; font-weight:700;">CONTAS DE DEMONSTRAÇÃO</div>
-            <div style="display:flex; gap:8px;">
-              <button data-click="${H(v.fillUserDemo)}" style="flex:1; padding:9px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">Usuário comum</button>
-              <button data-click="${H(v.fillAdminDemo)}" style="flex:1; padding:9px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:12px; font-weight:700; cursor:pointer; font-family:inherit;">Administrador</button>
-            </div>
           </div>
         </div>
       </div>`;
