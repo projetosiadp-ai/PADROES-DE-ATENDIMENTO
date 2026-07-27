@@ -210,7 +210,14 @@ class App {
         e.preventDefault();
         if (this.searchEl) this.searchEl.focus();
       } else if (e.key === 'Escape') {
-        if (this.state.searchQuery) this.setState({ searchQuery: '' });
+        const st = this.state;
+        if (st.showMsgModal) this.setState({ showMsgModal: false });
+        else if (st.showCatModal) this.setState({ showCatModal: false });
+        else if (st.showAcessoModal) this.setState({ showAcessoModal: false });
+        else if (st.showUsersModal) this.setState({ showUsersModal: false });
+        else if (st.confirm.open) this.setState({ confirm: { open: false, title: '', message: '', action: null } });
+        else if (st.userMenuOpen) this.setState({ userMenuOpen: false });
+        else if (st.searchQuery) this.setState({ searchQuery: '' });
       }
     };
     window.addEventListener('keydown', this._keyHandler);
@@ -725,7 +732,7 @@ class App {
       </div>`;
 
     return `
-    <div style="max-width:1400px; margin:0 auto; padding:24px;">
+    <div data-key="view-dashboard" class="dp-view-enter" style="max-width:1400px; margin:0 auto; padding:24px;">
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; margin-bottom:28px;">
         <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:14px; padding:16px;">
           <div style="font-size:13px; font-weight:800; color:#D97706; margin-bottom:10px;">🔥 MAIS USADAS</div>
@@ -774,22 +781,24 @@ class App {
             <button data-click="${H(v.openCreateMsg)}" style="border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:8px; cursor:pointer;">+ Nova mensagem</button>
           </div>
         </div>
-        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:14px; overflow:hidden;">
-          <div style="display:grid; grid-template-columns:${cols}; gap:10px; padding:12px 16px; font-size:11px; font-weight:800; color:${t.textSecondary}; background:${t.pageBg}; text-transform:uppercase;">
-            <div>Categoria</div><div>Título</div><div>Conteúdo</div><div>Tags</div><div>Freq.</div><div>Ações</div>
+        <div class="dp-table-scroll">
+          <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:14px; overflow:hidden; min-width:760px;">
+            <div style="display:grid; grid-template-columns:${cols}; gap:10px; padding:12px 16px; font-size:11px; font-weight:800; color:${t.textSecondary}; background:${t.pageBg}; text-transform:uppercase;">
+              <div>Categoria</div><div>Título</div><div>Conteúdo</div><div>Tags</div><div>Freq.</div><div>Ações</div>
+            </div>
+            ${v.adminMsgRows.map(row => `
+              <div data-key="${esc(row.id)}" style="display:grid; grid-template-columns:${cols}; gap:10px; padding:12px 16px; font-size:13px; border-top:1px solid ${t.border}; align-items:center;">
+                <div style="font-weight:700; color:${t.cyan};">${esc(row.categoria)}</div>
+                <div style="font-weight:700;">${esc(row.titulo)}</div>
+                <div style="color:${t.textSecondary}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(row.conteudo)}</div>
+                <div style="color:${t.textSecondary}; font-size:12px;">${esc(row.tagsLabel)}</div>
+                <div>${esc(row.frequencia)}</div>
+                <div style="display:flex; gap:6px;">
+                  <button data-click="${H(row.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:5px 9px; border-radius:6px; cursor:pointer;">Editar</button>
+                  <button data-click="${H(row.onDelete)}" style="border:none; background:#FEE2E2; color:#B91C1C; font-size:11px; font-weight:700; padding:5px 9px; border-radius:6px; cursor:pointer;">Excluir</button>
+                </div>
+              </div>`).join('')}
           </div>
-          ${v.adminMsgRows.map(row => `
-            <div data-key="${esc(row.id)}" style="display:grid; grid-template-columns:${cols}; gap:10px; padding:12px 16px; font-size:13px; border-top:1px solid ${t.border}; align-items:center;">
-              <div style="font-weight:700; color:${t.cyan};">${esc(row.categoria)}</div>
-              <div style="font-weight:700;">${esc(row.titulo)}</div>
-              <div style="color:${t.textSecondary}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(row.conteudo)}</div>
-              <div style="color:${t.textSecondary}; font-size:12px;">${esc(row.tagsLabel)}</div>
-              <div>${esc(row.frequencia)}</div>
-              <div style="display:flex; gap:6px;">
-                <button data-click="${H(row.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:5px 9px; border-radius:6px; cursor:pointer;">Editar</button>
-                <button data-click="${H(row.onDelete)}" style="border:none; background:#FEE2E2; color:#B91C1C; font-size:11px; font-weight:700; padding:5px 9px; border-radius:6px; cursor:pointer;">Excluir</button>
-              </div>
-            </div>`).join('')}
         </div>`;
     } else if (v.isAdminCats) {
       content = `
@@ -836,13 +845,13 @@ class App {
     }
 
     return `
-    <div style="max-width:1300px; margin:0 auto; padding:24px; display:flex; gap:24px; align-items:flex-start;">
-      <div style="width:220px; flex-shrink:0; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:14px; padding:12px; position:sticky; top:96px;">
-        <div data-click="${H(v.goDashboard)}" style="font-size:13px; font-weight:700; color:${t.textSecondary}; padding:10px 12px; cursor:pointer;">← Voltar ao painel</div>
+    <div data-key="view-admin" class="dp-admin-layout dp-view-enter" style="max-width:1300px; margin:0 auto; padding:24px; display:flex; gap:24px; align-items:flex-start;">
+      <div class="dp-admin-sidebar" role="tablist" aria-label="Seções do painel administrativo" style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:14px; padding:12px; position:sticky; top:96px;">
+        <div role="button" tabindex="0" data-click="${H(v.goDashboard)}" style="font-size:13px; font-weight:700; color:${t.textSecondary}; padding:10px 12px; cursor:pointer; border-radius:8px;">← Voltar ao painel</div>
         <div style="height:1px; background:${t.border}; margin:8px 0;"></div>
-        <div data-click="${H(v.setAdminTabMsgs)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:4px; background:${v.tabMsgsBg}; color:${v.tabMsgsColor};">Mensagens</div>
-        <div data-click="${H(v.setAdminTabCats)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:4px; background:${v.tabCatsBg}; color:${v.tabCatsColor};">Categorias</div>
-        ${v.isSuperAdmin ? `<div data-click="${H(v.setAdminTabAcessos)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; background:${v.tabAcessosBg}; color:${v.tabAcessosColor};">Acessos</div>` : ''}
+        <div role="tab" tabindex="0" aria-selected="${v.isAdminMsgs}" data-click="${H(v.setAdminTabMsgs)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:4px; background:${v.tabMsgsBg}; color:${v.tabMsgsColor};">Mensagens</div>
+        <div role="tab" tabindex="0" aria-selected="${v.isAdminCats}" data-click="${H(v.setAdminTabCats)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:4px; background:${v.tabCatsBg}; color:${v.tabCatsColor};">Categorias</div>
+        ${v.isSuperAdmin ? `<div role="tab" tabindex="0" aria-selected="${v.isAdminAcessos}" data-click="${H(v.setAdminTabAcessos)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; background:${v.tabAcessosBg}; color:${v.tabAcessosColor};">Acessos</div>` : ''}
       </div>
       <div style="flex:1; min-width:0;">
         <div style="font-size:12px; font-weight:700; color:${t.textSecondary}; margin-bottom:14px;">Operando em: <span style="color:${t.cyan};">${esc(v.activeAcesso.nome)}</span></div>
@@ -853,11 +862,12 @@ class App {
 
   viewModals(v, t, H) {
     let out = '';
+    const stay = H(() => {});
 
     if (v.showMsgModal) {
       out += `
-      <div style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
-        <div style="width:100%; max-width:520px; background:${t.cardBg}; border-radius:16px; padding:28px; animation:dp-modal-in .18s ease-out;">
+      <div role="presentation" data-click="${H(v.closeMsgModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
+        <div role="dialog" aria-modal="true" aria-label="${esc(v.msgModalTitle)}" data-click="${stay}" style="width:100%; max-width:520px; background:${t.cardBg}; border-radius:16px; padding:28px; animation:dp-modal-in .18s ease-out;">
           <div style="font-size:18px; font-weight:800; margin-bottom:18px;">${esc(v.msgModalTitle)}</div>
           <div style="display:flex; flex-direction:column; gap:14px;">
             <div>
@@ -873,7 +883,7 @@ class App {
             <div>
               <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Tags</label>
               <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;">
-                ${v.msgFormTagChips.map(tag => `<div style="font-size:11px; font-weight:700; color:${t.text}; background:${t.pageBg}; padding:5px 10px; border-radius:999px; display:flex; align-items:center; gap:6px;">${esc(tag.label)}<span data-click="${H(tag.onRemove)}" style="cursor:pointer; color:${t.textSecondary};">×</span></div>`).join('')}
+                ${v.msgFormTagChips.map(tag => `<div style="font-size:11px; font-weight:700; color:${t.text}; background:${t.pageBg}; padding:5px 10px; border-radius:999px; display:flex; align-items:center; gap:6px;">${esc(tag.label)}<span role="button" tabindex="0" aria-label="Remover tag ${esc(tag.label)}" data-click="${H(tag.onRemove)}" style="cursor:pointer; color:${t.textSecondary};">×</span></div>`).join('')}
               </div>
               <div style="display:flex; gap:8px;">
                 <input type="text" data-focus="msgTagInput" placeholder="adicionar tag e Enter" value="${esc(v.msgForm.tagInput)}" data-input="${H(v.onMsgTagInputChange)}" data-keydown="${H(v.onMsgTagKeyDown)}" style="flex:1; padding:9px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
@@ -895,8 +905,8 @@ class App {
 
     if (v.showCatModal) {
       out += `
-      <div style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
-        <div style="width:100%; max-width:400px; background:${t.cardBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
+      <div role="presentation" data-click="${H(v.closeCatModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
+        <div role="dialog" aria-modal="true" aria-label="${esc(v.catModalTitle)}" data-click="${stay}" style="width:100%; max-width:400px; background:${t.cardBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
           <div style="font-size:18px; font-weight:800; margin-bottom:16px;">${esc(v.catModalTitle)}</div>
           <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Nome da categoria</label>
           <input type="text" data-focus="catNome" value="${esc(v.catForm.nome)}" data-input="${H(v.onCatNomeChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
@@ -910,8 +920,8 @@ class App {
 
     if (v.showAcessoModal) {
       out += `
-      <div style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
-        <div style="width:100%; max-width:420px; background:${t.cardBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
+      <div role="presentation" data-click="${H(v.closeAcessoModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
+        <div role="dialog" aria-modal="true" aria-label="Novo Acesso" data-click="${stay}" style="width:100%; max-width:420px; background:${t.cardBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
           <div style="font-size:18px; font-weight:800; margin-bottom:16px;">Novo Acesso</div>
           <div style="display:flex; flex-direction:column; gap:14px;">
             <div>
@@ -925,7 +935,7 @@ class App {
             <div>
               <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:8px;">Cor de identificação</label>
               <div style="display:flex; gap:8px;">
-                ${v.acessoColorOptions.map(c => `<div data-click="${H(c.onSelect)}" style="width:30px; height:30px; border-radius:8px; background:${c.value}; cursor:pointer; border:${c.border};"></div>`).join('')}
+                ${v.acessoColorOptions.map(c => `<div role="button" tabindex="0" aria-label="Selecionar cor ${esc(c.value)}" data-click="${H(c.onSelect)}" style="width:30px; height:30px; border-radius:8px; background:${c.value}; cursor:pointer; border:${c.border};"></div>`).join('')}
               </div>
             </div>
           </div>
@@ -939,8 +949,8 @@ class App {
 
     if (v.showUsersModal) {
       out += `
-      <div style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
-        <div style="width:100%; max-width:460px; background:${t.cardBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
+      <div role="presentation" data-click="${H(v.closeUsersModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
+        <div role="dialog" aria-modal="true" aria-label="Usuários vinculados" data-click="${stay}" style="width:100%; max-width:460px; background:${t.cardBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
           <div style="font-size:18px; font-weight:800; margin-bottom:4px;">Usuários vinculados</div>
           <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:16px;">${esc(v.usersModalAcessoNome)}</div>
           <div style="font-size:13px; color:${t.textSecondary};">A edição de vínculos de usuários por acesso está disponível na Task de acompanhamento pós-lançamento (fora do escopo de hoje).</div>
@@ -953,8 +963,8 @@ class App {
 
     if (v.confirm.open) {
       out += `
-      <div style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:110; padding:20px;">
-        <div style="width:100%; max-width:380px; background:${t.cardBg}; border-radius:16px; padding:24px; animation:dp-modal-in .18s ease-out;">
+      <div role="presentation" data-click="${H(v.closeConfirm)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:110; padding:20px;">
+        <div role="alertdialog" aria-modal="true" aria-label="${esc(v.confirm.title)}" data-click="${stay}" style="width:100%; max-width:380px; background:${t.cardBg}; border-radius:16px; padding:24px; animation:dp-modal-in .18s ease-out;">
           <div style="font-size:16px; font-weight:800; margin-bottom:8px;">${esc(v.confirm.title)}</div>
           <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:20px; line-height:1.5;">${esc(v.confirm.message)}</div>
           <div style="display:flex; justify-content:flex-end; gap:10px;">
@@ -966,7 +976,7 @@ class App {
     }
 
     if (v.toast.show) {
-      out += `<div style="position:fixed; bottom:24px; right:24px; z-index:200; background:${v.toast.bg}; color:#fff; padding:13px 20px; border-radius:10px; font-size:13px; font-weight:700; box-shadow:0 12px 30px -8px rgba(0,0,0,0.35); animation:dp-toast-in .2s ease-out;">${esc(v.toast.msg)}</div>`;
+      out += `<div role="status" aria-live="polite" style="position:fixed; bottom:24px; right:24px; z-index:200; background:${v.toast.bg}; color:#fff; padding:13px 20px; border-radius:10px; font-size:13px; font-weight:700; box-shadow:0 12px 30px -8px rgba(0,0,0,0.35); animation:dp-toast-in .2s ease-out;">${esc(v.toast.msg)}</div>`;
     }
 
     return out;
