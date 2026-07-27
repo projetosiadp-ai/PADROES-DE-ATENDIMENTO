@@ -61,7 +61,10 @@ class App {
     let focusInfo = null;
     const a = document.activeElement;
     if (a && a.dataset && a.dataset.focus) {
-      focusInfo = { key: a.dataset.focus, start: a.selectionStart, end: a.selectionEnd };
+      // Some input types (email, number, etc.) don't support selectionStart/End —
+      // reading/restoring null on those resets the caret to 0 and reverses typed order.
+      const supportsSelection = typeof a.selectionStart === 'number';
+      focusInfo = { key: a.dataset.focus, start: supportsSelection ? a.selectionStart : null, end: supportsSelection ? a.selectionEnd : null };
     }
 
     this._reg = {};
@@ -84,7 +87,9 @@ class App {
       const el = this.root.querySelector('[data-focus="' + focusInfo.key + '"]');
       if (el) {
         el.focus();
-        try { el.setSelectionRange(focusInfo.start, focusInfo.end); } catch (e) {}
+        if (focusInfo.start !== null) {
+          try { el.setSelectionRange(focusInfo.start, focusInfo.end); } catch (e) {}
+        }
       }
     }
   }
@@ -507,7 +512,7 @@ class App {
           <div style="display:flex; flex-direction:column; gap:14px;">
             <div>
               <label style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">E-mail</label>
-              <input type="email" data-focus="loginEmail" placeholder="seuemail@empresa.com" value="${esc(v.loginEmail)}" data-input="${H(v.onLoginEmailChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 14px; border-radius:10px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
+              <input type="text" autocapitalize="off" autocorrect="off" spellcheck="false" data-focus="loginEmail" placeholder="seuemail@empresa.com" value="${esc(v.loginEmail)}" data-input="${H(v.onLoginEmailChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 14px; border-radius:10px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
             </div>
             <div>
               <label style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Senha</label>
