@@ -20,11 +20,10 @@ export async function signOut() {
 }
 
 export async function getSession() {
+  // Local/cached lookup only — no network round trip. Callers that need the
+  // profile fetch it via fetchAppData(), in parallel with everything else.
   const { data: { session } } = await supabase.auth.getSession();
-  if (!session) return null;
-  const { data: profile, error } = await supabase.from('profiles').select('*').eq('id', session.user.id).single();
-  if (error) fail('Não foi possível carregar o perfil', error);
-  return { user: session.user, profile };
+  return session || null;
 }
 
 export function onAuthChange(callback) {
@@ -33,11 +32,18 @@ export function onAuthChange(callback) {
 }
 
 export async function fetchAppData(userId) {
-  const { data: acessoMembros, error: amErr } = await supabase.from('acesso_membros').select('*').eq('user_id', userId);
+  // Profile and acesso_membros don't depend on each other — fire both at once
+  // instead of waiting on one before starting the other (was the main source
+  // of extra login latency: 2 sequential round trips collapsed into 1).
+  const [{ data: profile, error: pErr }, { data: acessoMembros, error: amErr }] = await Promise.all([
+    supabase.from('profiles').select('*').eq('id', userId).single(),
+    supabase.from('acesso_membros').select('*').eq('user_id', userId),
+  ]);
+  if (pErr) fail('Não foi possível carregar o perfil', pErr);
   if (amErr) fail('Não foi possível carregar seus acessos', amErr);
 
   const acessoIds = acessoMembros.map(m => m.acesso_id);
-  if (acessoIds.length === 0) return { acessos: [], acessoMembros: [], categorias: [], mensagens: [], favoritos: [], recentes: [] };
+  if (acessoIds.length === 0) return { profile, acessos: [], acessoMembros: [], categorias: [], mensagens: [], favoritos: [], recentes: [] };
 
   const [{ data: acessos, error: aErr }, { data: categorias, error: cErr }, { data: mensagens, error: mErr },
          { data: favoritos, error: fErr }, { data: recentes, error: rErr }] = await Promise.all([
@@ -53,7 +59,7 @@ export async function fetchAppData(userId) {
   if (fErr) fail('Não foi possível carregar os favoritos', fErr);
   if (rErr) fail('Não foi possível carregar os recentes', rErr);
 
-  return { acessos, acessoMembros, categorias, mensagens, favoritos, recentes };
+  return { profile, acessos, acessoMembros, categorias, mensagens, favoritos, recentes };
 }
 
 export async function saveMensagem({ id, acessoId, categoria, titulo, tags, conteudo }) {

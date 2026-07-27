@@ -6,6 +6,85 @@ const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
 
+/* ---------------- DOM morphing ----------------
+ * Patches the live tree in place instead of tearing it down and rebuilding it
+ * (the old innerHTML-replace-per-keystroke approach). Reusing nodes means the
+ * browser never destroys a focused <input>, never restarts CSS animations on
+ * unrelated elements, and never has to re-decode/re-layout the whole page —
+ * which is what caused the flicker/oscillation while typing.
+ */
+const keyOf = (el) => (el.nodeType === Node.ELEMENT_NODE && el.getAttribute) ? el.getAttribute('data-key') : null;
+
+function syncAttrs(oldEl, newEl) {
+  const oldAttrs = oldEl.attributes;
+  for (let i = oldAttrs.length - 1; i >= 0; i--) {
+    const name = oldAttrs[i].name;
+    if (!newEl.hasAttribute(name)) oldEl.removeAttribute(name);
+  }
+  const newAttrs = newEl.attributes;
+  for (let i = 0; i < newAttrs.length; i++) {
+    const name = newAttrs[i].name;
+    const value = newAttrs[i].value;
+    if (oldEl.getAttribute(name) !== value) oldEl.setAttribute(name, value);
+  }
+}
+
+function syncFormValue(oldEl, newEl) {
+  const tag = oldEl.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') {
+    // Never stomp the live value of the field the user is actively typing in
+    // unless it actually differs — setting .value, even to an identical
+    // string, can be enough to disturb the caret in some browsers.
+    if (oldEl.value !== newEl.value) oldEl.value = newEl.value;
+  } else if (tag === 'SELECT') {
+    if (oldEl.value !== newEl.value) oldEl.value = newEl.value;
+  }
+}
+
+function morphNode(oldNode, newNode) {
+  if (oldNode.nodeType !== newNode.nodeType || oldNode.nodeName !== newNode.nodeName) {
+    return newNode.cloneNode(true);
+  }
+  if (oldNode.nodeType === Node.TEXT_NODE || oldNode.nodeType === Node.COMMENT_NODE) {
+    if (oldNode.nodeValue !== newNode.nodeValue) oldNode.nodeValue = newNode.nodeValue;
+    return oldNode;
+  }
+  if (oldNode.nodeType !== Node.ELEMENT_NODE) return oldNode;
+  syncAttrs(oldNode, newNode);
+  syncFormValue(oldNode, newNode);
+  morphChildren(oldNode, newNode);
+  return oldNode;
+}
+
+function morphChildren(oldParent, newParent) {
+  const oldChildren = Array.from(oldParent.childNodes);
+  const newChildren = Array.from(newParent.childNodes);
+  const oldKeyed = new Map();
+  oldChildren.forEach(c => { const k = keyOf(c); if (k) oldKeyed.set(k, c); });
+  const used = new Set();
+
+  for (let i = 0; i < newChildren.length; i++) {
+    const newChild = newChildren[i];
+    const newKey = keyOf(newChild);
+    let match = null;
+    if (newKey && oldKeyed.has(newKey) && !used.has(oldKeyed.get(newKey))) {
+      match = oldKeyed.get(newKey);
+    } else {
+      const candidate = oldChildren[i];
+      if (candidate && !used.has(candidate) && candidate.nodeName === newChild.nodeName && !keyOf(candidate)) {
+        match = candidate;
+      }
+    }
+    const kept = match ? morphNode(match, newChild) : newChild.cloneNode(true);
+    if (match) used.add(match);
+    const ref = oldParent.childNodes[i] || null;
+    if (ref !== kept) oldParent.insertBefore(kept, ref);
+  }
+  while (oldParent.childNodes.length > newChildren.length) {
+    oldParent.removeChild(oldParent.lastChild);
+  }
+}
+
 class App {
   constructor(root) {
     this.root = root;
@@ -38,7 +117,7 @@ class App {
       acessoMembros: [],
       categorias: [],
       mensagens: [],
-      loginEmail: '', loginPassword: '', loginError: ''
+      loginEmail: '', loginPassword: '', loginError: '', loggingIn: false
     };
   }
 
@@ -58,40 +137,48 @@ class App {
   }
 
   render() {
-    let focusInfo = null;
-    const a = document.activeElement;
-    if (a && a.dataset && a.dataset.focus) {
-      // Some input types (email, number, etc.) don't support selectionStart/End —
-      // reading/restoring null on those resets the caret to 0 and reverses typed order.
-      const supportsSelection = typeof a.selectionStart === 'number';
-      focusInfo = { key: a.dataset.focus, start: supportsSelection ? a.selectionStart : null, end: supportsSelection ? a.selectionEnd : null };
-    }
-
     this._reg = {};
     this._regN = 0;
     const v = this.renderVals();
-    this.root.innerHTML = this.view(v);
+    const container = document.createElement('div');
+    container.innerHTML = this.view(v);
+    // Morph instead of innerHTML-replace: reuses existing nodes, so the
+    // focused input/caret, in-flight CSS animations, and scroll position all
+    // survive a render untouched.
+    morphChildren(this.root, container);
 
-    const R = this._reg;
-    this.root.querySelectorAll('[data-click]').forEach(el =>
-      el.addEventListener('click', (e) => R[el.getAttribute('data-click')](e)));
-    this.root.querySelectorAll('[data-input]').forEach(el =>
-      el.addEventListener('input', (e) => R[el.getAttribute('data-input')](e)));
-    this.root.querySelectorAll('[data-change]').forEach(el =>
-      el.addEventListener('change', (e) => R[el.getAttribute('data-change')](e)));
-    this.root.querySelectorAll('[data-keydown]').forEach(el =>
-      el.addEventListener('keydown', (e) => R[el.getAttribute('data-keydown')](e)));
-    this.root.querySelectorAll('[data-ref]').forEach(el => R[el.getAttribute('data-ref')](el));
+    this.root.querySelectorAll('[data-ref]').forEach(el => {
+      const fn = this._reg[el.getAttribute('data-ref')];
+      if (fn) fn(el);
+    });
+  }
 
-    if (focusInfo) {
-      const el = this.root.querySelector('[data-focus="' + focusInfo.key + '"]');
-      if (el) {
-        el.focus();
-        if (focusInfo.start !== null) {
-          try { el.setSelectionRange(focusInfo.start, focusInfo.end); } catch (e) {}
-        }
-      }
-    }
+  /* Delegated listeners, attached once. Each render() only refreshes
+   * this._reg and the data-* attribute values (via morph) — never re-attaches
+   * per-node listeners, which used to pile up a new listener on every
+   * keystroke as nodes got recreated. */
+  bindDelegatedEvents() {
+    const dispatch = (evtName) => (e) => {
+      const el = e.target.closest && e.target.closest(`[data-${evtName}]`);
+      if (!el) return;
+      const fn = this._reg[el.getAttribute(`data-${evtName}`)];
+      if (fn) fn(e);
+    };
+    this.root.addEventListener('click', dispatch('click'));
+    this.root.addEventListener('input', dispatch('input'));
+    this.root.addEventListener('change', dispatch('change'));
+    this.root.addEventListener('keydown', dispatch('keydown'));
+
+    // Keyboard activation (Enter/Space) for clickable divs (role="button")
+    // that don't define their own data-keydown handler.
+    this.root.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const el = e.target.closest && e.target.closest('[role="button"][data-click]');
+      if (!el || el !== e.target || el.hasAttribute('data-keydown')) return;
+      e.preventDefault();
+      const fn = this._reg[el.getAttribute('data-click')];
+      if (fn) fn(e);
+    });
   }
 
   async mount() {
@@ -100,18 +187,19 @@ class App {
     } catch (e) {}
 
     this.render();
+    this.bindDelegatedEvents();
 
     api.onAuthChange(async (session) => {
       if (!session) {
         this.setState({ currentUser: null, profileId: null, loading: false, appView: 'dashboard', adminTab: 'mensagens' });
         return;
       }
-      await this.loadSessionAndData();
+      await this.refreshAppData(session);
     });
 
     try {
       const session = await api.getSession();
-      if (session) await this.loadSessionAndData();
+      if (session) await this.refreshAppData(session);
       else this.setState({ loading: false });
     } catch (e) {
       this.setState({ loading: false, loadError: e.message });
@@ -128,18 +216,15 @@ class App {
     window.addEventListener('keydown', this._keyHandler);
   }
 
-  async loadSessionAndData() {
-    const session = await api.getSession();
-    if (!session) { this.setState({ currentUser: null, profileId: null, loading: false }); return; }
-    await this.refreshAppData(session);
-  }
-
   async refreshAppData(session) {
+    // `session` may be a raw Supabase session ({ user }) on first load/login,
+    // or the already-shaped { user, profile } from state on a data refresh —
+    // both carry .user, which is all fetchAppData needs.
     try {
       const data = await api.fetchAppData(session.user.id);
       const firstAcessoId = data.acessos[0] ? data.acessos[0].id : null;
       this.setState({
-        currentUser: session,
+        currentUser: { user: session.user, profile: data.profile },
         profileId: session.user.id,
         acessos: data.acessos,
         acessoMembros: data.acessoMembros,
@@ -200,6 +285,7 @@ class App {
         isLogin: true, isApp: false, isLoading: false,
         theme,
         loginEmail: st.loginEmail, loginPassword: st.loginPassword, loginError: st.loginError,
+        loggingIn: st.loggingIn, loginBtnLabel: st.loggingIn ? 'Entrando…' : 'Entrar',
         onLoginEmailChange: (e) => this.setState({ loginEmail: e.target.value }),
         onLoginPasswordChange: (e) => this.setState({ loginPassword: e.target.value }),
         handleLogin: () => this.handleLogin(),
@@ -253,6 +339,8 @@ class App {
         tagChips: m.tags, frequencia: m.frequencia,
         favIcon: isFav ? '★' : '☆', favColor: isFav ? '#F59E0B' : theme.textSecondary,
         onToggleFav: () => toggleFav(m.id),
+        onCardClick: () => copyMessage(m),
+        onCardKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyMessage(m); } },
         onCopy: () => copyMessage(m), copyLabel: st.copiedId === m.id ? '✓ Copiado!' : 'Copiar',
         copyBtnBg: st.copiedId === m.id ? '#16A34A' : theme.navy,
         onEdit: () => this.openEditMsg(m),
@@ -295,13 +383,13 @@ class App {
     const adminQ = st.adminSearchQuery.trim().toLowerCase();
     const adminMsgRows = acessoMsgs.filter(m => !adminQ || m.titulo.toLowerCase().includes(adminQ) || m.conteudo.toLowerCase().includes(adminQ))
       .map(m => ({
-        categoria: m.categoria, titulo: m.titulo, conteudo: m.conteudo, tagsLabel: m.tags.join(', '), frequencia: m.frequencia,
+        id: m.id, categoria: m.categoria, titulo: m.titulo, conteudo: m.conteudo, tagsLabel: m.tags.join(', '), frequencia: m.frequencia,
         onEdit: () => this.openEditMsg(m),
         onDelete: () => this.requestDelete('Excluir mensagem', `Tem certeza que deseja excluir "${m.titulo}"? Esta ação não pode ser desfeita.`, () => this.deleteMsg(m.id))
       }));
 
     const catRows = acessoCats.map(c => ({
-      nome: c.nome,
+      id: c.id, nome: c.nome,
       countLabel: acessoMsgs.filter(m => m.categoria === c.nome).length + ' mensagens',
       onEdit: () => this.openEditCat(c),
       onDelete: () => this.requestDelete('Excluir categoria', `Excluir a categoria "${c.nome}"? As mensagens vinculadas manterão o nome, mas o filtro será removido.`, () => this.deleteCat(c.id))
@@ -414,11 +502,14 @@ class App {
   /* ---------------- actions ---------------- */
 
   async handleLogin() {
+    if (this.state.loggingIn) return;
+    this.setState({ loggingIn: true, loginError: '' });
     try {
       await api.signIn(this.state.loginEmail.trim(), this.state.loginPassword);
-      this.setState({ loginError: '' });
+      // Leave loggingIn true — the auth listener now loads the app data, and
+      // the login screen (and its button) unmounts as soon as that finishes.
     } catch (e) {
-      this.setState({ loginError: e.message });
+      this.setState({ loginError: e.message, loggingIn: false });
     }
   }
 
@@ -491,7 +582,26 @@ class App {
 
   view(v) {
     if (v.isLoading) {
-      return `<div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:${v.theme.pageBg}; color:${v.theme.textSecondary}; font-family:'Nunito',sans-serif;">Carregando…</div>`;
+      const skel = (w, h, extra) => `<div class="dp-skeleton" style="width:${w}; height:${h}; border-radius:8px; ${extra || ''}"></div>`;
+      return `
+      <div style="min-height:100vh; background:${v.theme.pageBg};">
+        <div style="padding:14px 24px; border-bottom:1px solid ${v.theme.border}; background:${v.theme.cardBg};">
+          <div style="max-width:1400px; margin:0 auto; display:flex; align-items:center; gap:20px;">
+            <img src="assets/dentalplus-logo.png" alt="DentalPlus" style="height:26px; width:auto; opacity:.5;" />
+            ${skel('1px', '26px')}
+            ${skel('220px', '18px')}
+            ${skel('320px', '38px', 'margin-left:auto; border-radius:12px;')}
+          </div>
+        </div>
+        <div style="max-width:1400px; margin:0 auto; padding:24px;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; margin-bottom:28px;">
+            ${skel('100%', '96px', 'border-radius:14px;')}${skel('100%', '96px', 'border-radius:14px;')}${skel('100%', '96px', 'border-radius:14px;')}
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px;">
+            ${Array.from({ length: 8 }).map(() => skel('100%', '170px', 'border-radius:14px;')).join('')}
+          </div>
+        </div>
+      </div>`;
     }
     const t = v.theme;
     const H = (fn) => this.h(fn);
@@ -502,7 +612,7 @@ class App {
       <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:${t.pageBg}; padding:24px;">
         <div style="width:100%; max-width:400px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:16px; padding:40px 36px; box-shadow:0 20px 50px -20px rgba(11,45,107,0.25);">
           <div style="display:flex; justify-content:center; margin-bottom:28px;">
-            <img src="assets/dentalplus-logo.png" alt="DentalPlus" style="height:52px; width:auto;" />
+            <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="309" height="52" style="height:52px; width:auto;" />
           </div>
           <div style="text-align:center; margin-bottom:28px;">
             <div style="font-size:20px; font-weight:800; color:${t.text};">Mensagens de Relacionamento</div>
@@ -512,13 +622,13 @@ class App {
           <div style="display:flex; flex-direction:column; gap:14px;">
             <div>
               <label style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">E-mail</label>
-              <input type="text" autocapitalize="off" autocorrect="off" spellcheck="false" data-focus="loginEmail" placeholder="seuemail@empresa.com" value="${esc(v.loginEmail)}" data-input="${H(v.onLoginEmailChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 14px; border-radius:10px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
+              <input type="text" autocapitalize="off" autocorrect="off" spellcheck="false" ${v.loggingIn ? 'disabled' : ''} data-focus="loginEmail" placeholder="seuemail@empresa.com" value="${esc(v.loginEmail)}" data-input="${H(v.onLoginEmailChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 14px; border-radius:10px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
             </div>
             <div>
               <label style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Senha</label>
-              <input type="password" data-focus="loginPassword" placeholder="••••••••" value="${esc(v.loginPassword)}" data-input="${H(v.onLoginPasswordChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 14px; border-radius:10px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
+              <input type="password" ${v.loggingIn ? 'disabled' : ''} data-focus="loginPassword" placeholder="••••••••" value="${esc(v.loginPassword)}" data-input="${H(v.onLoginPasswordChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 14px; border-radius:10px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
             </div>
-            <button data-click="${H(v.handleLogin)}" style="margin-top:8px; padding:13px; border-radius:10px; border:none; background:${t.navy}; color:#fff; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit;">Entrar</button>
+            <button data-click="${H(v.handleLogin)}" ${v.loggingIn ? 'disabled' : ''} style="margin-top:8px; padding:13px; border-radius:10px; border:none; background:${t.navy}; color:#fff; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit; opacity:${v.loggingIn ? '0.75' : '1'};">${esc(v.loginBtnLabel)}</button>
           </div>
           <div style="display:flex; justify-content:space-between; margin-top:16px;">
             <a href="#" data-click="${H(v.noop)}" style="font-size:13px; color:${t.cyan}; text-decoration:none; font-weight:600;">Esqueci minha senha</a>
@@ -543,8 +653,8 @@ class App {
     return `
     <div style="position:sticky; top:0; z-index:40; background:${t.cardBg}; border-bottom:1px solid ${t.border}; padding:14px 24px;">
       <div style="display:flex; align-items:center; gap:20px; max-width:1400px; margin:0 auto; flex-wrap:wrap;">
-        <div style="display:flex; align-items:center; gap:12px; cursor:pointer;" data-click="${H(v.goDashboard)}">
-          <img src="assets/dentalplus-logo.png" alt="DentalPlus" style="height:30px; width:auto;" />
+        <div role="button" tabindex="0" style="display:flex; align-items:center; gap:12px; cursor:pointer; border-radius:8px;" data-click="${H(v.goDashboard)}">
+          <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="140" height="24" style="height:24px; width:auto;" />
           <div style="width:1px; height:26px; background:${t.border};"></div>
           <div style="font-size:15px; font-weight:800; color:${t.text}; line-height:1.2;">Mensagens — ${esc(v.activeAcesso.nome)}</div>
         </div>
@@ -561,7 +671,7 @@ class App {
         <div style="display:flex; align-items:center; gap:10px; margin-left:auto;">
           <button data-click="${H(v.toggleDarkMode)}" title="Alternar tema" style="width:34px; height:34px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; cursor:pointer; font-size:15px;">${v.darkModeIcon}</button>
           <div style="position:relative;">
-            <div data-click="${H(v.toggleUserMenu)}" style="display:flex; align-items:center; gap:8px; cursor:pointer; padding:6px 10px; border-radius:10px; border:1px solid ${t.border};">
+            <div role="button" tabindex="0" aria-haspopup="true" aria-expanded="${v.userMenuOpen}" data-click="${H(v.toggleUserMenu)}" style="display:flex; align-items:center; gap:8px; cursor:pointer; padding:6px 10px; border-radius:10px; border:1px solid ${t.border};">
               <div style="width:28px; height:28px; border-radius:50%; background:${t.cyan}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800;">${esc(v.currentUser.iniciais)}</div>
               <div style="line-height:1.15;">
                 <div style="font-size:13px; font-weight:700;">${esc(v.currentUser.nome)}</div>
@@ -577,8 +687,8 @@ class App {
         </div>
       </div>
       <div style="max-width:1400px; margin:12px auto 0; display:flex; gap:8px; flex-wrap:wrap;">
-        <div data-click="${H(v.setCategoryAll)}" style="padding:7px 14px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; background:${v.chipAllBg}; color:${v.chipAllColor};">Todas</div>
-        ${v.categoriaChips.map(chip => `<div data-click="${H(chip.onClick)}" style="padding:7px 14px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; background:${chip.bg}; color:${chip.color};">${esc(chip.nome)}</div>`).join('')}
+        <div role="button" tabindex="0" data-click="${H(v.setCategoryAll)}" style="padding:7px 14px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; background:${v.chipAllBg}; color:${v.chipAllColor};">Todas</div>
+        ${v.categoriaChips.map(chip => `<div role="button" tabindex="0" data-click="${H(chip.onClick)}" style="padding:7px 14px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; background:${chip.bg}; color:${chip.color};">${esc(chip.nome)}</div>`).join('')}
       </div>
     </div>`;
   }
@@ -591,7 +701,7 @@ class App {
       </div>`;
 
     const card = (m) => `
-      <div style="background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:14px; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; transition:transform .15s; box-shadow:${m.shadow};">
+      <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" data-keydown="${H(m.onCardKeyDown)}" role="button" tabindex="0" aria-label="Copiar mensagem" title="Clique para copiar" class="dp-card" style="background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:14px; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${m.shadow}; cursor:pointer;">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
           <div style="display:flex; align-items:center; gap:8px;">
             <div style="width:26px; height:26px; border-radius:8px; background:${t.cyan}22; color:${t.cyan}; font-weight:800; font-size:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">${esc(m.catInitial)}</div>
@@ -669,7 +779,7 @@ class App {
             <div>Categoria</div><div>Título</div><div>Conteúdo</div><div>Tags</div><div>Freq.</div><div>Ações</div>
           </div>
           ${v.adminMsgRows.map(row => `
-            <div style="display:grid; grid-template-columns:${cols}; gap:10px; padding:12px 16px; font-size:13px; border-top:1px solid ${t.border}; align-items:center;">
+            <div data-key="${esc(row.id)}" style="display:grid; grid-template-columns:${cols}; gap:10px; padding:12px 16px; font-size:13px; border-top:1px solid ${t.border}; align-items:center;">
               <div style="font-weight:700; color:${t.cyan};">${esc(row.categoria)}</div>
               <div style="font-weight:700;">${esc(row.titulo)}</div>
               <div style="color:${t.textSecondary}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(row.conteudo)}</div>
@@ -689,7 +799,7 @@ class App {
         </div>
         <div style="display:flex; flex-direction:column; gap:8px;">
           ${v.catRows.map(cat => `
-            <div style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:12px; padding:12px 16px;">
+            <div data-key="${esc(cat.id)}" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:12px; padding:12px 16px;">
               <div>
                 <div style="font-weight:700; font-size:14px;">${esc(cat.nome)}</div>
                 <div style="font-size:12px; color:${t.textSecondary};">${esc(cat.countLabel)}</div>
@@ -708,7 +818,7 @@ class App {
         </div>
         <div style="display:flex; flex-direction:column; gap:10px;">
           ${v.acessoRows.map(a => `
-            <div style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:12px; padding:14px 18px;">
+            <div data-key="${esc(a.id)}" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:12px; padding:14px 18px;">
               <div style="display:flex; align-items:center; gap:12px;">
                 <div style="width:36px; height:36px; border-radius:10px; background:${a.cor}; color:#fff; font-weight:800; display:flex; align-items:center; justify-content:center; font-size:14px;">${esc(a.initial)}</div>
                 <div>

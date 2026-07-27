@@ -13,6 +13,38 @@
   ::selection { background: #1BA7DC55; }
   @keyframes dp-toast-in { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
   @keyframes dp-modal-in { from { transform: translateY(16px) scale(0.98); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+  @keyframes dp-shimmer { 0% { background-position: -300px 0; } 100% { background-position: 300px 0; } }
+
+  button { cursor: pointer; transition: transform .12s ease, box-shadow .15s ease, filter .12s ease, opacity .12s ease; }
+  button:hover { filter: brightness(1.07); }
+  button:active { transform: scale(0.96); }
+  a { transition: opacity .12s ease; }
+  a:hover { opacity: .75; }
+  input, textarea, select { transition: border-color .15s ease, box-shadow .15s ease; }
+  input:focus, textarea:focus, select:focus {
+    outline: none !important;
+    border-color: #1BA7DC !important;
+    box-shadow: 0 0 0 3px rgba(27,167,220,0.18);
+  }
+  [role="button"] { transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
+  [role="button"]:focus-visible, button:focus-visible, a:focus-visible {
+    outline: 2px solid #1BA7DC;
+    outline-offset: 2px;
+  }
+  .dp-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 14px 28px -14px rgba(15,44,107,0.28);
+    border-color: #1BA7DC55 !important;
+  }
+  .dp-card:active { transform: translateY(-1px); }
+  .dp-skeleton {
+    background: linear-gradient(90deg, rgba(148,163,184,0.15) 25%, rgba(148,163,184,0.3) 37%, rgba(148,163,184,0.15) 63%);
+    background-size: 600px 100%;
+    animation: dp-shimmer 1.4s ease-in-out infinite;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.45); border-radius: 999px; }
+  ::-webkit-scrollbar-track { background: transparent; }
 </style>
 </head>
 <body>
