@@ -260,8 +260,8 @@ class App {
     const dark = this.state.darkMode;
     return {
       navy: '#0F2C6B', cyan: '#1BA7DC',
-      pageBg: dark ? '#0B1220' : '#F5F8FC',
-      cardBg: dark ? '#151E2E' : '#FFFFFF',
+      pageBg: dark ? '#0B1220' : '#D4F6FB',
+      cardBg: dark ? 'rgba(21,30,46,0.85)' : 'rgba(255,255,255,0.8)',
       inputBg: dark ? '#0F1826' : '#FFFFFF',
       text: dark ? '#E7ECF3' : '#12203F',
       textSecondary: dark ? '#8B98AC' : '#64748B',
@@ -270,7 +270,8 @@ class App {
       radiusLg: '16px',
       shadowSm: dark ? '0 2px 6px -2px rgba(0,0,0,0.4)' : '0 2px 6px -2px rgba(15,44,107,0.12)',
       shadowMd: dark ? '0 8px 20px -10px rgba(0,0,0,0.5)' : '0 8px 20px -10px rgba(15,44,107,0.18)',
-      shadowLg: dark ? '0 14px 32px -14px rgba(0,0,0,0.6)' : '0 14px 32px -14px rgba(15,44,107,0.28)'
+      shadowLg: dark ? '0 14px 32px -14px rgba(0,0,0,0.6)' : '0 14px 32px -14px rgba(15,44,107,0.28)',
+      glassEffect: 'backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);'
     };
   }
 
@@ -730,7 +731,7 @@ class App {
     const panelHeader = (icon, label, color) => `<div style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:700; color:${t.text}; margin-bottom:10px;">${icon}<span style="color:${t.textSecondary};">${esc(label)}</span></div>`;
 
     const card = (m) => `
-      <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" data-keydown="${H(m.onCardKeyDown)}" role="button" tabindex="0" aria-label="Copiar mensagem" title="Clique para copiar" class="dp-card" style="background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${m.shadow === 'none' ? t.shadowMd : m.shadow}; cursor:pointer;">
+      <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" data-keydown="${H(m.onCardKeyDown)}" role="button" tabindex="0" aria-label="Copiar mensagem" title="Clique para copiar" class="dp-card" style="background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${m.shadow === 'none' ? t.shadowMd : m.shadow}; cursor:pointer; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
           <div style="display:flex; align-items:center; gap:8px;">
             <div style="width:26px; height:26px; border-radius:${t.radiusSm}; background:${m.catColor}22; color:${m.catColor}; font-weight:800; font-size:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">${esc(m.catInitial)}</div>
@@ -756,17 +757,17 @@ class App {
     return `
     <div data-key="view-dashboard" class="dp-view-enter" style="max-width:1400px; margin:0 auto; padding:24px;">
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; margin-bottom:28px;">
-        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:16px; box-shadow:${t.shadowSm};">
+        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:16px; box-shadow:${t.shadowSm}; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);">
           ${panelHeader(fireIcon, 'MAIS USADAS', '#D97706')}
           <div style="display:flex; flex-direction:column; gap:6px;">${v.mostUsedList.map(miniRow).join('')}</div>
         </div>
-        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:16px; box-shadow:${t.shadowSm};">
+        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:16px; box-shadow:${t.shadowSm}; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);">
           ${panelHeader(clockIcon, 'RECENTES', t.cyan)}
           <div style="display:flex; flex-direction:column; gap:6px;">
             ${v.hasRecent ? v.recentList.map(miniRow).join('') : `<div><span style="font-size:13px; color:${t.textSecondary};">Suas cópias recentes aparecem aqui.</span></div>`}
           </div>
         </div>
-        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:16px; box-shadow:${t.shadowSm};">
+        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:16px; box-shadow:${t.shadowSm}; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);">
           ${panelHeader(starIcon(true), 'FAVORITAS', '#4F46E5')}
           <div style="display:flex; flex-direction:column; gap:6px;">
             ${v.favList.length ? v.favList.map(miniRow).join('') : `<div><span style="font-size:13px; color:${t.textSecondary};">Marque mensagens com a estrela para vê-las aqui.</span></div>`}
