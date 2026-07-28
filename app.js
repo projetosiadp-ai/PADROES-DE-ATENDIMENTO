@@ -692,7 +692,7 @@ class App {
           <button data-click="${H(v.toggleDarkMode)}" title="Alternar tema" style="width:34px; height:34px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:transparent; color:${t.text}; cursor:pointer; font-size:15px; box-shadow:${t.shadowSm};">${v.darkModeIcon}</button>
           <div style="position:relative;">
             <div role="button" tabindex="0" aria-haspopup="true" aria-expanded="${v.userMenuOpen}" data-click="${H(v.toggleUserMenu)}" style="display:flex; align-items:center; gap:8px; cursor:pointer; padding:6px 10px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; box-shadow:${t.shadowSm};">
-              <div style="width:28px; height:28px; border-radius:50%; background:${t.cyan}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800;">${esc(v.currentUser.iniciais)}</div>
+              <div style="width:28px; height:28px; border-radius:50%; background:linear-gradient(135deg, ${t.cyan}dd 0%, ${t.navy}dd 100%); color:#fff; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; box-shadow:0 2px 8px rgba(27,167,220,0.3); position:relative; overflow:hidden;"><div style="position:absolute; inset:0; background:radial-gradient(circle at 30% 30%, rgba(255,255,255,0.15), transparent); border-radius:50%;"></div><span style="position:relative; z-index:1;">${esc(v.currentUser.iniciais)}</span></div>
               <div style="line-height:1.15;">
                 <div style="font-size:13px; font-weight:700;">${esc(v.currentUser.nome)}</div>
                 <div style="font-size:11px; color:${t.textSecondary};">${esc(v.currentUser.perfilLabel)}</div>
