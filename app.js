@@ -398,7 +398,8 @@ class App {
     }));
 
     const density = st.density;
-    const gridStyle = `display:grid; grid-template-columns:repeat(auto-fill,minmax(${density === 'compact' ? 260 : 300}px,1fr)); gap:${density === 'compact' ? 12 : 16}px; align-items:start;`;
+    const cardGap = density === 'compact' ? 12 : 16;
+    const gridStyle = `column-width:${density === 'compact' ? 260 : 300}px; column-gap:${cardGap}px;`;
     const cardPadding = density === 'compact' ? '14px' : '18px';
 
     const adminQ = st.adminSearchQuery.trim().toLowerCase();
@@ -475,7 +476,7 @@ class App {
 
       resultsCountLabel: `${filtered.length} mensagem${filtered.length === 1 ? '' : 's'} encontrada${filtered.length === 1 ? '' : 's'}`,
       hasResults: filtered.length > 0,
-      gridStyle, cardPadding,
+      gridStyle, cardPadding, cardGap,
       cardList: filtered.map(buildCard),
 
       categorias: acessoCats,
@@ -731,7 +732,7 @@ class App {
     const panelHeader = (icon, label, color) => `<div style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:700; color:${t.text}; margin-bottom:10px;">${icon}<span style="color:${t.textSecondary};">${esc(label)}</span></div>`;
 
     const card = (m) => `
-      <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" data-keydown="${H(m.onCardKeyDown)}" role="button" tabindex="0" aria-label="Copiar mensagem" title="Clique para copiar" class="dp-card" style="background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${m.shadow === 'none' ? t.shadowMd : m.shadow}; cursor:pointer; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);">
+      <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" data-keydown="${H(m.onCardKeyDown)}" role="button" tabindex="0" aria-label="Copiar mensagem" title="Clique para copiar" class="dp-card" style="background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${m.shadow === 'none' ? t.shadowMd : m.shadow}; cursor:pointer; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); break-inside:avoid; margin-bottom:${v.cardGap}px;">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
           <div style="display:flex; align-items:center; gap:8px;">
             <div style="width:26px; height:26px; border-radius:${t.radiusSm}; background:${m.catColor}22; color:${m.catColor}; font-weight:800; font-size:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">${esc(m.catInitial)}</div>
