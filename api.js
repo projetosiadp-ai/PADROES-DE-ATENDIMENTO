@@ -6,6 +6,9 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+const LOGIN_TS_KEY = 'dp_login_ts';
+const LOGIN_TTL_MS = 5 * 24 * 60 * 60 * 1000; // 5 dias
+
 function fail(prefix, error) {
   throw new Error(`${prefix}: ${error?.message || error}`);
 }
@@ -13,17 +16,32 @@ function fail(prefix, error) {
 export async function signIn(email, password) {
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) fail('Não foi possível entrar', error);
+  try { localStorage.setItem(LOGIN_TS_KEY, String(Date.now())); } catch (e) {}
 }
 
 export async function signOut() {
   await supabase.auth.signOut();
+  try { localStorage.removeItem(LOGIN_TS_KEY); } catch (e) {}
 }
 
 export async function getSession() {
   // Local/cached lookup only — no network round trip. Callers that need the
   // profile fetch it via fetchAppData(), in parallel with everything else.
   const { data: { session } } = await supabase.auth.getSession();
-  return session || null;
+  if (!session) return null;
+
+  // Supabase's own refresh token has no fixed lifetime, so a login otherwise
+  // persists forever. Enforce our own 5-day cap on top of it.
+  let loginTs = null;
+  try { loginTs = Number(localStorage.getItem(LOGIN_TS_KEY)); } catch (e) {}
+  if (loginTs && Date.now() - loginTs > LOGIN_TTL_MS) {
+    await signOut();
+    return null;
+  }
+  if (!loginTs) {
+    try { localStorage.setItem(LOGIN_TS_KEY, String(Date.now())); } catch (e) {}
+  }
+  return session;
 }
 
 export function onAuthChange(callback) {
