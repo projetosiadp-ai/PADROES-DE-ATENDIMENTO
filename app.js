@@ -244,7 +244,7 @@ class App {
         loading: false, loadError: ''
       });
     } catch (e) {
-      this.setState({ loading: false, loadError: e.message });
+      this.setState({ loading: false, loadError: e.message, loggingIn: false, loginError: e.message });
       this.showToast(e.message, 'error');
     }
   }
