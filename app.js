@@ -740,7 +740,7 @@ class App {
           <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; line-height:1; display:flex; transition:transform .15s ease;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'">${starIcon(m.isFav)}</button>
         </div>
         <div style="font-size:15px; font-weight:800; color:${t.text};">${m.titleSegments.map(seg => `<span style="${seg.style}">${esc(seg.text)}</span>`).join('')}</div>
-        <div style="font-size:13px; color:${t.textSecondary}; line-height:1.5; white-space:pre-wrap;">${esc(m.displayContent)}</div>
+        <div style="font-size:13px; color:${t.textSecondary}; line-height:1.5; white-space:pre-wrap; word-break:break-word; overflow-wrap:break-word; max-width:100%;">${esc(m.displayContent)}</div>
         ${m.showToggle ? `<div data-click="${H(m.onToggleExpand)}" style="font-size:12px; font-weight:700; color:${t.cyan}; cursor:pointer;">${esc(m.toggleLabel)}</div>` : ''}
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
           ${m.tagChips.map(tag => `<div style="font-size:11px; font-weight:700; color:${t.textSecondary}; background:${t.pageBg}; padding:4px 9px; border-radius:999px;">${esc(tag)}</div>`).join('')}
