@@ -652,9 +652,6 @@ class App {
             </div>
             <button data-click="${H(v.handleLogin)}" ${v.loggingIn ? 'disabled' : ''} style="margin-top:8px; padding:13px; border-radius:10px; border:none; background:${t.navy}; color:#fff; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit; opacity:${v.loggingIn ? '0.75' : '1'};">${esc(v.loginBtnLabel)}</button>
           </div>
-          <div style="display:flex; justify-content:space-between; margin-top:16px;">
-            <a href="#" data-click="${H(v.noop)}" style="font-size:13px; color:${t.cyan}; text-decoration:none; font-weight:600;">Esqueci minha senha</a>
-          </div>
         </div>
       </div>`;
     }
