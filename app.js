@@ -265,8 +265,20 @@ class App {
       inputBg: dark ? '#0F1826' : '#FFFFFF',
       text: dark ? '#E7ECF3' : '#12203F',
       textSecondary: dark ? '#8B98AC' : '#64748B',
-      border: dark ? '#22304A' : '#E2E8F0'
+      border: dark ? '#22304A' : '#E2E8F0',
+      radiusSm: '8px',
+      radiusLg: '16px',
+      shadowSm: dark ? '0 2px 6px -2px rgba(0,0,0,0.4)' : '0 2px 6px -2px rgba(15,44,107,0.12)',
+      shadowMd: dark ? '0 8px 20px -10px rgba(0,0,0,0.5)' : '0 8px 20px -10px rgba(15,44,107,0.18)',
+      shadowLg: dark ? '0 14px 32px -14px rgba(0,0,0,0.6)' : '0 14px 32px -14px rgba(15,44,107,0.28)'
     };
+  }
+
+  categoryColor(nome) {
+    const palette = ['#1BA7DC', '#4F46E5', '#D97706', '#16A34A', '#DB2777', '#7C3AED'];
+    let hash = 0;
+    for (let i = 0; i < nome.length; i++) hash = (hash * 31 + nome.charCodeAt(i)) >>> 0;
+    return palette[hash % palette.length];
   }
 
   showToast(msg, type) {
@@ -340,15 +352,16 @@ class App {
       const displayContent = isLong && !expanded ? m.conteudo.slice(0, threshold).trim() + '…' : m.conteudo;
       return {
         id: m.id, categoria: m.categoria, catInitial: m.categoria.charAt(0).toUpperCase(),
+        catColor: this.categoryColor(m.categoria),
         titleSegments: this.titleSegments(m.titulo, st.searchQuery),
         displayContent, showToggle: isLong, toggleLabel: expanded ? 'ver menos' : 'ver mais',
         onToggleExpand: () => toggleExpand(m.id),
         tagChips: m.tags, frequencia: m.frequencia,
-        favIcon: isFav ? '★' : '☆', favColor: isFav ? '#F59E0B' : theme.textSecondary,
+        isFav, favColor: isFav ? '#F59E0B' : theme.textSecondary,
         onToggleFav: () => toggleFav(m.id),
         onCardClick: () => copyMessage(m),
         onCardKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyMessage(m); } },
-        onCopy: () => copyMessage(m), copyLabel: st.copiedId === m.id ? '✓ Copiado!' : 'Copiar',
+        onCopy: () => copyMessage(m), copied: st.copiedId === m.id, copyLabel: st.copiedId === m.id ? 'Copiado!' : 'Copiar',
         copyBtnBg: st.copiedId === m.id ? '#16A34A' : theme.navy,
         onEdit: () => this.openEditMsg(m),
         borderColor: isFav ? '#F59E0B' : theme.border,
@@ -676,9 +689,9 @@ class App {
           <div style="position:absolute; right:12px; top:50%; transform:translateY(-50%); font-size:11px; font-weight:700; color:${t.textSecondary}; background:${t.pageBg}; border:1px solid ${t.border}; padding:3px 8px; border-radius:6px;">${esc(v.shortcutLabel)}</div>
         </div>
         <div style="display:flex; align-items:center; gap:10px; margin-left:auto;">
-          <button data-click="${H(v.toggleDarkMode)}" title="Alternar tema" style="width:34px; height:34px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; cursor:pointer; font-size:15px;">${v.darkModeIcon}</button>
+          <button data-click="${H(v.toggleDarkMode)}" title="Alternar tema" style="width:34px; height:34px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:transparent; color:${t.text}; cursor:pointer; font-size:15px; box-shadow:${t.shadowSm};">${v.darkModeIcon}</button>
           <div style="position:relative;">
-            <div role="button" tabindex="0" aria-haspopup="true" aria-expanded="${v.userMenuOpen}" data-click="${H(v.toggleUserMenu)}" style="display:flex; align-items:center; gap:8px; cursor:pointer; padding:6px 10px; border-radius:10px; border:1px solid ${t.border};">
+            <div role="button" tabindex="0" aria-haspopup="true" aria-expanded="${v.userMenuOpen}" data-click="${H(v.toggleUserMenu)}" style="display:flex; align-items:center; gap:8px; cursor:pointer; padding:6px 10px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; box-shadow:${t.shadowSm};">
               <div style="width:28px; height:28px; border-radius:50%; background:${t.cyan}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800;">${esc(v.currentUser.iniciais)}</div>
               <div style="line-height:1.15;">
                 <div style="font-size:13px; font-weight:700;">${esc(v.currentUser.nome)}</div>
@@ -686,15 +699,15 @@ class App {
               </div>
             </div>
             ${v.userMenuOpen ? `
-              <div style="position:absolute; right:0; top:44px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:10px; box-shadow:0 12px 30px -10px rgba(0,0,0,0.25); min-width:200px; padding:8px; z-index:50;">
-                ${v.isAdmin ? `<div data-click="${H(v.goAdmin)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:700; color:${t.text};">Painel Administrativo</div>` : ''}
-                <div data-click="${H(v.logout)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:700; color:#DC2626;">Sair</div>
+              <div style="position:absolute; right:0; top:44px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusSm}; box-shadow:${t.shadowLg}; min-width:200px; padding:8px; z-index:50;">
+                ${v.isAdmin ? `<div data-click="${H(v.goAdmin)}" style="padding:10px 12px; border-radius:${t.radiusSm}; cursor:pointer; font-size:13px; font-weight:700; color:${t.text};">Painel Administrativo</div>` : ''}
+                <div data-click="${H(v.logout)}" style="padding:10px 12px; border-radius:${t.radiusSm}; cursor:pointer; font-size:13px; font-weight:700; color:#DC2626;">Sair</div>
               </div>` : ''}
           </div>
         </div>
       </div>
       <div style="max-width:1400px; margin:12px auto 0; display:flex; gap:8px; flex-wrap:wrap;">
-        <div role="button" tabindex="0" data-click="${H(v.setCategoryAll)}" style="padding:7px 14px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; background:${v.chipAllBg}; color:${v.chipAllColor};">Todas</div>
+        <div role="button" tabindex="0" data-click="${H(v.setCategoryAll)}" style="padding:7px 14px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; background:${v.chipAllBg}; color:${v.chipAllColor}; box-shadow:${v.chipAllBg === t.navy ? t.shadowSm : 'none'};">Todas</div>
         ${v.categoriaChips.map(chip => `<div role="button" tabindex="0" data-click="${H(chip.onClick)}" style="padding:7px 14px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; background:${chip.bg}; color:${chip.color};">${esc(chip.nome)}</div>`).join('')}
       </div>
     </div>`;
@@ -702,19 +715,28 @@ class App {
 
   viewDashboard(v, t, H) {
     const miniRow = (m) => `
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-radius:8px; background:${t.pageBg};">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-radius:${t.radiusSm}; background:${t.pageBg};">
         <div style="font-size:13px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(m.titulo)}</div>
         <button data-click="${H(m.onCopy)}" style="flex-shrink:0; border:none; background:${t.navy}; color:#fff; font-size:11px; font-weight:700; padding:5px 10px; border-radius:6px; cursor:pointer;">${esc(m.copyLabel)}</button>
       </div>`;
 
+    const starIcon = (filled) => filled
+      ? `<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6.6 7.1.7-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7-5.4-4.7 7.1-.7z"/></svg>`
+      : `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2.5l2.9 6.6 7.1.7-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7-5.4-4.7 7.1-.7z"/></svg>`;
+    const clipboardIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/></svg>`;
+    const checkIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><path d="M20 6L9 17l-5-5"/></svg>`;
+    const fireIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3-3 4-3 8a4 4 0 0 0 8 0c1.5 1.5 2 3.5 2 5a7 7 0 1 1-14 0c0-4 3-6 4-8 1-2 1.5-3.5 3-5z"/></svg>`;
+    const clockIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>`;
+    const panelHeader = (icon, label, color) => `<div style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:800; color:${color}; background:${color}14; padding:6px 10px; border-radius:${t.radiusSm}; margin-bottom:10px;">${icon}${esc(label)}</div>`;
+
     const card = (m) => `
-      <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" data-keydown="${H(m.onCardKeyDown)}" role="button" tabindex="0" aria-label="Copiar mensagem" title="Clique para copiar" class="dp-card" style="background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:14px; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${m.shadow}; cursor:pointer;">
+      <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" data-keydown="${H(m.onCardKeyDown)}" role="button" tabindex="0" aria-label="Copiar mensagem" title="Clique para copiar" class="dp-card" style="background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${m.shadow === 'none' ? t.shadowMd : m.shadow}; cursor:pointer;">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
           <div style="display:flex; align-items:center; gap:8px;">
-            <div style="width:26px; height:26px; border-radius:8px; background:${t.cyan}22; color:${t.cyan}; font-weight:800; font-size:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">${esc(m.catInitial)}</div>
+            <div style="width:26px; height:26px; border-radius:${t.radiusSm}; background:${m.catColor}22; color:${m.catColor}; font-weight:800; font-size:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">${esc(m.catInitial)}</div>
             <div style="font-size:11px; font-weight:700; color:${t.textSecondary};">${esc(m.categoria)}</div>
           </div>
-          <button data-click="${H(m.onToggleFav)}" aria-label="Favoritar" style="border:none; background:transparent; cursor:pointer; font-size:18px; color:${m.favColor}; line-height:1;">${m.favIcon}</button>
+          <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; line-height:1; display:flex; transition:transform .15s ease;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'">${starIcon(m.isFav)}</button>
         </div>
         <div style="font-size:15px; font-weight:800; color:${t.text};">${m.titleSegments.map(seg => `<span style="${seg.style}">${esc(seg.text)}</span>`).join('')}</div>
         <div style="font-size:13px; color:${t.textSecondary}; line-height:1.5; white-space:pre-wrap;">${esc(m.displayContent)}</div>
@@ -725,8 +747,8 @@ class App {
         <div style="display:flex; align-items:center; justify-content:space-between; margin-top:4px; padding-top:10px; border-top:1px solid ${t.border};">
           <div style="font-size:11px; color:${t.textSecondary}; font-weight:600;">usada ${esc(m.frequencia)}x</div>
           <div style="display:flex; gap:8px;">
-            ${v.isAdmin ? `<button data-click="${H(m.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:8px; cursor:pointer;">Editar</button>` : ''}
-            <button data-click="${H(m.onCopy)}" style="border:none; background:${m.copyBtnBg}; color:#fff; font-size:12px; font-weight:700; padding:7px 14px; border-radius:8px; cursor:pointer;">${esc(m.copyLabel)}</button>
+            ${v.isAdmin ? `<button data-click="${H(m.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:${t.radiusSm}; cursor:pointer;">Editar</button>` : ''}
+            <button data-click="${H(m.onCopy)}" style="border:none; background:${m.copyBtnBg}; color:#fff; font-size:12px; font-weight:700; padding:7px 14px; border-radius:${t.radiusSm}; cursor:pointer; display:flex; align-items:center; gap:6px;">${m.copied ? checkIcon : clipboardIcon}${esc(m.copyLabel)}</button>
           </div>
         </div>
       </div>`;
@@ -734,18 +756,18 @@ class App {
     return `
     <div data-key="view-dashboard" class="dp-view-enter" style="max-width:1400px; margin:0 auto; padding:24px;">
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; margin-bottom:28px;">
-        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:14px; padding:16px;">
-          <div style="font-size:13px; font-weight:800; color:#D97706; margin-bottom:10px;">🔥 MAIS USADAS</div>
+        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:16px; box-shadow:${t.shadowSm};">
+          ${panelHeader(fireIcon, 'MAIS USADAS', '#D97706')}
           <div style="display:flex; flex-direction:column; gap:6px;">${v.mostUsedList.map(miniRow).join('')}</div>
         </div>
-        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:14px; padding:16px;">
-          <div style="font-size:13px; font-weight:800; color:${t.cyan}; margin-bottom:10px;">🕒 RECENTES</div>
+        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:16px; box-shadow:${t.shadowSm};">
+          ${panelHeader(clockIcon, 'RECENTES', t.cyan)}
           <div style="display:flex; flex-direction:column; gap:6px;">
             ${v.hasRecent ? v.recentList.map(miniRow).join('') : `<div><span style="font-size:13px; color:${t.textSecondary};">Suas cópias recentes aparecem aqui.</span></div>`}
           </div>
         </div>
-        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:14px; padding:16px;">
-          <div style="font-size:13px; font-weight:800; color:#4F46E5; margin-bottom:10px;">★ FAVORITAS</div>
+        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:16px; box-shadow:${t.shadowSm};">
+          ${panelHeader(starIcon(true), 'FAVORITAS', '#4F46E5')}
           <div style="display:flex; flex-direction:column; gap:6px;">
             ${v.favList.length ? v.favList.map(miniRow).join('') : `<div><span style="font-size:13px; color:${t.textSecondary};">Marque mensagens com a estrela para vê-las aqui.</span></div>`}
           </div>
