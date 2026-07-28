@@ -398,7 +398,7 @@ class App {
     }));
 
     const density = st.density;
-    const gridStyle = `display:grid; grid-template-columns:repeat(auto-fill,minmax(${density === 'compact' ? 260 : 300}px,1fr)); gap:${density === 'compact' ? 12 : 16}px;`;
+    const gridStyle = `display:grid; grid-template-columns:repeat(auto-fill,minmax(${density === 'compact' ? 260 : 300}px,1fr)); gap:${density === 'compact' ? 12 : 16}px; align-items:start;`;
     const cardPadding = density === 'compact' ? '14px' : '18px';
 
     const adminQ = st.adminSearchQuery.trim().toLowerCase();
