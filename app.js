@@ -260,12 +260,12 @@ class App {
     const dark = this.state.darkMode;
     return {
       navy: '#0F2C6B', cyan: '#1BA7DC',
-      pageBg: dark ? '#091B2E' : '#D4F6FB',
-      cardBg: dark ? 'rgba(15,44,107,0.75)' : 'rgba(255,255,255,0.8)',
+      pageBg: dark ? '#091B2E' : '#A9DEEC',
+      cardBg: dark ? 'rgba(15,44,107,0.75)' : 'rgba(255,255,255,0.82)',
       inputBg: dark ? '#0A2847' : '#FFFFFF',
-      text: dark ? '#E7ECF3' : '#12203F',
-      textSecondary: dark ? '#8B98AC' : '#64748B',
-      border: dark ? '#22304A' : '#E2E8F0',
+      text: dark ? '#E7ECF3' : '#0D1B38',
+      textSecondary: dark ? '#8B98AC' : '#4A5B75',
+      border: dark ? '#22304A' : '#B8DCE8',
       radiusSm: '8px',
       radiusLg: '16px',
       shadowSm: dark ? '0 2px 6px -2px rgba(0,0,0,0.4)' : '0 2px 6px -2px rgba(15,44,107,0.12)',
