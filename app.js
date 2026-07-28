@@ -635,7 +635,7 @@ class App {
             <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="309" height="52" style="height:52px; width:auto;" />
           </div>
           <div style="text-align:center; margin-bottom:28px;">
-            <div style="font-size:20px; font-weight:800; color:${t.text};">Mensagens de Relacionamento</div>
+            <div style="font-size:20px; font-weight:800; color:${t.text};">Padrões de atendimento</div>
             <div style="font-size:14px; color:${t.textSecondary}; margin-top:4px;">Acesse com sua conta para continuar</div>
           </div>
           ${v.loginError ? `<div style="background:#FEE2E2; color:#B91C1C; font-size:13px; font-weight:600; padding:10px 14px; border-radius:10px; margin-bottom:16px;">${esc(v.loginError)}</div>` : ''}
@@ -676,7 +676,7 @@ class App {
         <div role="button" tabindex="0" style="display:flex; align-items:center; gap:12px; cursor:pointer; border-radius:8px;" data-click="${H(v.goDashboard)}">
           <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="140" height="24" style="height:24px; width:auto;" />
           <div style="width:1px; height:26px; background:${t.border};"></div>
-          <div style="font-size:15px; font-weight:800; color:${t.text}; line-height:1.2;">Mensagens — ${esc(v.activeAcesso.nome)}</div>
+          <div style="font-size:15px; font-weight:800; color:${t.text}; line-height:1.2;">Padrões de atendimento</div>
         </div>
         ${v.showAcessoSelector ? `
           <select data-change="${H(v.onChangeActiveAcesso)}" style="padding:8px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-weight:700; font-family:inherit;">
@@ -727,7 +727,7 @@ class App {
     const checkIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><path d="M20 6L9 17l-5-5"/></svg>`;
     const fireIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3-3 4-3 8a4 4 0 0 0 8 0c1.5 1.5 2 3.5 2 5a7 7 0 1 1-14 0c0-4 3-6 4-8 1-2 1.5-3.5 3-5z"/></svg>`;
     const clockIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>`;
-    const panelHeader = (icon, label, color) => `<div style="display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:800; color:${color}; background:${color}14; padding:6px 10px; border-radius:${t.radiusSm}; margin-bottom:10px;">${icon}${esc(label)}</div>`;
+    const panelHeader = (icon, label, color) => `<div style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:700; color:${t.text}; margin-bottom:10px;">${icon}<span style="color:${t.textSecondary};">${esc(label)}</span></div>`;
 
     const card = (m) => `
       <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" data-keydown="${H(m.onCardKeyDown)}" role="button" tabindex="0" aria-label="Copiar mensagem" title="Clique para copiar" class="dp-card" style="background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${m.shadow === 'none' ? t.shadowMd : m.shadow}; cursor:pointer;">
