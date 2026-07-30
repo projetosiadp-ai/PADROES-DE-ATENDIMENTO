@@ -151,6 +151,25 @@ export async function toggleUserAdminLocal(userId, acessoId, value) {
   if (error) fail('Não foi possível atualizar o admin local', error);
 }
 
+export async function listAcessoUsers(acessoId) {
+  const { data: membros, error: mErr } = await supabase.from('acesso_membros').select('user_id, is_admin_local').eq('acesso_id', acessoId);
+  if (mErr) fail('Não foi possível carregar os usuários do acesso', mErr);
+  if (membros.length === 0) return [];
+  const userIds = membros.map(m => m.user_id);
+  const { data: profiles, error: pErr } = await supabase.from('profiles').select('id, nome, email').in('id', userIds);
+  if (pErr) fail('Não foi possível carregar os usuários do acesso', pErr);
+  return membros.map(m => {
+    const p = profiles.find(pr => pr.id === m.user_id) || {};
+    return { userId: m.user_id, nome: p.nome || '—', email: p.email || '—', isAdminLocal: m.is_admin_local };
+  });
+}
+
+export async function adminResetPassword(userId) {
+  const { data, error } = await supabase.functions.invoke('admin-reset-password', { body: { userId } });
+  if (error) return { ok: false, error: error.message };
+  return data;
+}
+
 export async function toggleFavorito(userId, mensagemId, isFav) {
   if (isFav) {
     const { error } = await supabase.from('favoritos').delete().eq('user_id', userId).eq('mensagem_id', mensagemId);

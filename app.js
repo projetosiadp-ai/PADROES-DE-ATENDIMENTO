@@ -117,6 +117,7 @@ class App {
       showCatModal: false, editingCatId: null, catForm: { nome: '' },
       showAcessoModal: false, acessoForm: { nome: '', descricao: '', cor: '#1BA7DC' },
       showUsersModal: false, usersModalAcessoId: null,
+      acessoUsers: [], acessoUsersLoading: false, resetPasswordResult: null,
       acessos: [],
       acessoMembros: [],
       categorias: [],
@@ -461,7 +462,7 @@ class App {
         statusBg: a.ativo ? '#DCFCE7' : '#FEE2E2', statusColor: a.ativo ? '#166534' : '#B91C1C',
         toggleLabel: a.ativo ? 'Desativar' : 'Ativar',
         onToggleStatus: () => this.toggleAcessoStatus(a.id, a.ativo),
-        onUsers: () => this.setState({ showUsersModal: true, usersModalAcessoId: a.id })
+        onUsers: () => this.openUsersModal(a.id)
       };
     });
 
@@ -525,8 +526,14 @@ class App {
       adminMsgRows, catRows, acessoRows,
       openCreateMsg: () => this.openCreateMsg(),
       usersModalAcessoNome: (st.acessos.find(a => a.id === st.usersModalAcessoId) || {}).nome || '',
-      usersModalRows: [],
-      closeUsersModal: () => this.setState({ showUsersModal: false }),
+      acessoUsersLoading: st.acessoUsersLoading,
+      usersModalRows: st.acessoUsers.map(u => ({
+        userId: u.userId, nome: u.nome, email: u.email,
+        roleLabel: u.isAdminLocal ? 'Admin local' : 'Usuário',
+        onResetPassword: () => this.requestResetPassword(u),
+        justReset: st.resetPasswordResult && st.resetPasswordResult.userId === u.userId ? st.resetPasswordResult.tempPassword : null
+      })),
+      closeUsersModal: () => this.setState({ showUsersModal: false, resetPasswordResult: null }),
 
       showMsgModal: st.showMsgModal, msgModalTitle: st.editingMsgId ? 'Editar mensagem' : 'Nova mensagem',
       msgForm: st.msgForm, msgFormTagChips, msgContentCount: st.msgForm.conteudo.length,
@@ -757,6 +764,26 @@ class App {
     try {
       await api.toggleAcessoStatus(id, !currentAtivo);
       await this.refreshAppData(this.state.currentUser);
+    } catch (e) { this.showToast(e.message, 'error'); }
+  }
+  async openUsersModal(acessoId) {
+    this.setState({ showUsersModal: true, usersModalAcessoId: acessoId, acessoUsersLoading: true, acessoUsers: [], resetPasswordResult: null });
+    try {
+      const users = await api.listAcessoUsers(acessoId);
+      this.setState({ acessoUsers: users, acessoUsersLoading: false });
+    } catch (e) {
+      this.setState({ acessoUsersLoading: false });
+      this.showToast(e.message, 'error');
+    }
+  }
+  requestResetPassword(user) {
+    this.requestDelete('Redefinir senha', `Gerar uma nova senha temporária para ${user.nome} (${user.email})? A senha atual dele(a) deixará de funcionar.`, () => this.resetUserPassword(user.userId));
+  }
+  async resetUserPassword(userId) {
+    try {
+      const result = await api.adminResetPassword(userId);
+      if (!result.ok) { this.showToast(result.error || 'Não foi possível redefinir a senha.', 'error'); return; }
+      this.setState({ resetPasswordResult: { userId, tempPassword: result.tempPassword } });
     } catch (e) { this.showToast(e.message, 'error'); }
   }
   requestDelete(title, message, action) { this.setState({ confirm: { open: true, title, message, action } }); }
@@ -1160,10 +1187,30 @@ class App {
     if (v.showUsersModal) {
       out += `
       <div role="presentation" data-click="${H(v.closeUsersModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
-        <div role="dialog" aria-modal="true" aria-label="Usuários vinculados" data-click="${stay}" style="width:100%; max-width:460px; background:${t.cardBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
+        <div role="dialog" aria-modal="true" aria-label="Usuários vinculados" data-click="${stay}" style="width:100%; max-width:480px; max-height:80vh; overflow-y:auto; background:${t.modalSolidBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
           <div style="font-size:18px; font-weight:800; margin-bottom:4px;">Usuários vinculados</div>
           <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:16px;">${esc(v.usersModalAcessoNome)}</div>
-          <div style="font-size:13px; color:${t.textSecondary};">A edição de vínculos de usuários por acesso está disponível na Task de acompanhamento pós-lançamento (fora do escopo de hoje).</div>
+          ${v.acessoUsersLoading
+            ? `<div style="font-size:13px; color:${t.textSecondary};">Carregando…</div>`
+            : (v.usersModalRows.length === 0
+              ? `<div style="font-size:13px; color:${t.textSecondary};">Nenhum usuário vinculado a este acesso ainda.</div>`
+              : `<div style="display:flex; flex-direction:column; gap:8px;">
+                  ${v.usersModalRows.map(u => `
+                    <div data-key="${esc(u.userId)}" style="background:${t.pageBg}; border:1px solid ${t.border}; border-radius:${t.radiusSm}; padding:12px 14px;">
+                      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                        <div>
+                          <div style="font-weight:700; font-size:14px;">${esc(u.nome)}</div>
+                          <div style="font-size:12px; color:${t.textSecondary};">${esc(u.email)} · ${esc(u.roleLabel)}</div>
+                        </div>
+                        <button data-click="${H(u.onResetPassword)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer; flex-shrink:0;">Gerar senha temporária</button>
+                      </div>
+                      ${u.justReset ? `
+                        <div style="margin-top:10px; padding:10px 12px; background:#DCFCE7; border-radius:8px;">
+                          <div style="font-size:11px; font-weight:800; color:#166534; text-transform:uppercase; margin-bottom:4px;">Nova senha temporária (copie agora, só aparece uma vez)</div>
+                          <div style="font-family:monospace; font-size:14px; font-weight:700; color:#14532D; user-select:all;">${esc(u.justReset)}</div>
+                        </div>` : ''}
+                    </div>`).join('')}
+                </div>`)}
           <div style="display:flex; justify-content:flex-end; margin-top:20px;">
             <button data-click="${H(v.closeUsersModal)}" style="padding:10px 18px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Concluir</button>
           </div>
