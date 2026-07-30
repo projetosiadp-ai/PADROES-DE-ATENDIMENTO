@@ -281,7 +281,7 @@ class App {
       pageBg: dark ? '#091B2E' : '#A9DEEC',
       cardBg: dark ? 'rgba(15,44,107,0.75)' : 'rgba(255,255,255,0.82)',
       modalSolidBg: dark ? '#12203F' : '#FFFFFF',
-      logoChipBg: dark ? 'rgba(255,255,255,0.92)' : 'transparent',
+      logoGlow: dark ? 'filter: drop-shadow(0 0 2px rgba(255,255,255,0.85)) drop-shadow(0 0 5px rgba(255,255,255,0.45));' : '',
       inputBg: dark ? '#0A2847' : '#FFFFFF',
       text: dark ? '#E7ECF3' : '#0D1B38',
       textSecondary: dark ? '#8B98AC' : '#4A5B75',
@@ -764,7 +764,7 @@ class App {
       <div style="min-height:100vh; background:${v.theme.pageBg};">
         <div style="padding:14px 24px; border-bottom:1px solid ${v.theme.border}; background:${v.theme.cardBg};">
           <div style="max-width:1400px; margin:0 auto; display:flex; align-items:center; gap:20px;">
-            <img src="assets/dentalplus-logo.png" alt="DentalPlus" style="height:26px; width:auto; opacity:.5; background:${v.theme.logoChipBg}; border-radius:6px; padding:${v.theme.logoChipBg !== 'transparent' ? '4px 8px' : '0'};" />
+            <img src="assets/dentalplus-logo.png" alt="DentalPlus" style="height:26px; width:auto; opacity:.5; ${v.theme.logoGlow}" />
             ${skel('1px', '26px')}
             ${skel('220px', '18px')}
             ${skel('320px', '38px', 'margin-left:auto; border-radius:12px;')}
@@ -789,7 +789,7 @@ class App {
       <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:${t.pageBg}; padding:24px;">
         <div style="width:100%; max-width:400px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:16px; padding:40px 36px; box-shadow:0 20px 50px -20px rgba(11,45,107,0.25);">
           <div style="display:flex; justify-content:center; margin-bottom:28px;">
-            <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="309" height="52" style="height:52px; width:auto; background:${t.logoChipBg}; border-radius:8px; padding:${t.logoChipBg !== 'transparent' ? '8px 14px' : '0'};" />
+            <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="309" height="52" style="height:52px; width:auto; ${t.logoGlow}" />
           </div>
           <div style="text-align:center; margin-bottom:28px;">
             <div style="font-size:20px; font-weight:800; color:${t.text};">Padrões de atendimento</div>
@@ -828,7 +828,7 @@ class App {
     <div style="position:sticky; top:0; z-index:40; background:${t.cardBg}; border-bottom:1px solid ${t.border}; padding:14px 24px;">
       <div style="display:flex; align-items:center; gap:20px; max-width:1400px; margin:0 auto; flex-wrap:wrap;">
         <div role="button" tabindex="0" style="display:flex; align-items:center; gap:12px; cursor:pointer; border-radius:8px;" data-click="${H(v.goDashboard)}">
-          <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="140" height="24" style="height:24px; width:auto; background:${t.logoChipBg}; border-radius:6px; padding:${t.logoChipBg !== 'transparent' ? '4px 8px' : '0'};" />
+          <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="140" height="24" style="height:24px; width:auto; ${t.logoGlow}" />
           <div style="width:1px; height:26px; background:${t.border};"></div>
           <div style="font-size:15px; font-weight:800; color:${t.text}; line-height:1.2;">Padrões de atendimento</div>
         </div>
