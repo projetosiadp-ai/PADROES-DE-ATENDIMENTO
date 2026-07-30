@@ -128,7 +128,7 @@ class App {
       approvalPopupSeenThisSession: false,
       showSolicitacaoModal: false, viewingSolicitacaoId: null,
       solicitacaoRejectMode: false, rejectMotivo: '',
-      loginEmail: '', loginPassword: '', loginError: '', loggingIn: false
+      loginEmail: '', loginPassword: '', loginError: '', loggingIn: false, showLoginPassword: false
     };
   }
 
@@ -283,6 +283,8 @@ class App {
       pageBg: dark ? '#091B2E' : '#A9DEEC',
       cardBg: dark ? 'rgba(15,44,107,0.75)' : 'rgba(255,255,255,0.82)',
       modalSolidBg: dark ? '#12203F' : '#FFFFFF',
+      chipBg: dark ? '#182A45' : '#F4F7FA',
+      chipBgHover: dark ? '#1E3352' : '#EBEFF3',
       logoGlow: dark ? 'filter: drop-shadow(0 0 2px rgba(255,255,255,0.85)) drop-shadow(0 0 5px rgba(255,255,255,0.45));' : '',
       inputBg: dark ? '#0A2847' : '#FFFFFF',
       text: dark ? '#E7ECF3' : '#0D1B38',
@@ -335,8 +337,10 @@ class App {
         theme,
         loginEmail: st.loginEmail, loginPassword: st.loginPassword, loginError: st.loginError,
         loggingIn: st.loggingIn, loginBtnLabel: st.loggingIn ? 'Entrando…' : 'Entrar',
+        showLoginPassword: st.showLoginPassword,
         onLoginEmailChange: (e) => this.setState({ loginEmail: e.target.value }),
         onLoginPasswordChange: (e) => this.setState({ loginPassword: e.target.value }),
+        onToggleLoginPassword: () => this.setState({ showLoginPassword: !st.showLoginPassword }),
         handleLogin: () => this.handleLogin(),
         onLoginKeyDown: (e) => { if (e.key === 'Enter') this.handleLogin(); },
         noop: (e) => e.preventDefault(),
@@ -419,12 +423,13 @@ class App {
     });
 
     const acessoMsgsInCategory = acessoMsgs.filter(m => !st.categoryFilter || m.categoria === st.categoryFilter);
-    const mostUsed = [...acessoMsgsInCategory].sort((a, b) => b.frequencia - a.frequencia).slice(0, 5)
-      .map(m => ({ titulo: m.titulo, onCopy: () => copyMessage(m), copyLabel: st.copiedId === m.id ? '✓' : 'Copiar' }));
-    const recentList = st.recentIds.map(id => acessoMsgsInCategory.find(m => m.id === id)).filter(Boolean)
-      .map(m => ({ titulo: m.titulo, onCopy: () => copyMessage(m), copyLabel: st.copiedId === m.id ? '✓' : 'Copiar' }));
-    const favList = st.favoriteIds.map(id => acessoMsgsInCategory.find(m => m.id === id)).filter(Boolean)
-      .map(m => ({ titulo: m.titulo, onCopy: () => copyMessage(m), copyLabel: st.copiedId === m.id ? '✓' : 'Copiar' }));
+    const miniRowData = (m) => ({
+      titulo: m.titulo, catInitial: m.categoria.charAt(0).toUpperCase(), catColor: this.categoryColor(m.categoria),
+      onCopy: () => copyMessage(m), copied: st.copiedId === m.id, copyLabel: st.copiedId === m.id ? 'Copiado!' : 'Copiar'
+    });
+    const mostUsed = [...acessoMsgsInCategory].sort((a, b) => b.frequencia - a.frequencia).slice(0, 5).map(miniRowData);
+    const recentList = st.recentIds.map(id => acessoMsgsInCategory.find(m => m.id === id)).filter(Boolean).map(miniRowData);
+    const favList = st.favoriteIds.map(id => acessoMsgsInCategory.find(m => m.id === id)).filter(Boolean).map(miniRowData);
 
     const categoriaChips = acessoCats.map(c => ({
       nome: c.nome,
@@ -880,7 +885,10 @@ class App {
             </div>
             <div>
               <label style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Senha</label>
-              <input type="password" ${v.loggingIn ? 'disabled' : ''} data-focus="loginPassword" placeholder="••••••••" value="${esc(v.loginPassword)}" data-input="${H(v.onLoginPasswordChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 14px; border-radius:10px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
+              <div style="position:relative;">
+                <input type="${v.showLoginPassword ? 'text' : 'password'}" ${v.loggingIn ? 'disabled' : ''} data-focus="loginPassword" placeholder="••••••••" value="${esc(v.loginPassword)}" data-input="${H(v.onLoginPasswordChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 44px 12px 14px; border-radius:10px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
+                <button type="button" data-click="${H(v.onToggleLoginPassword)}" tabindex="-1" aria-label="${v.showLoginPassword ? 'Ocultar senha' : 'Mostrar senha'}" title="${v.showLoginPassword ? 'Ocultar senha' : 'Mostrar senha'}" style="position:absolute; right:6px; top:50%; transform:translateY(-50%); border:none; background:transparent; color:${t.textSecondary}; cursor:pointer; padding:6px; display:flex; align-items:center; justify-content:center; border-radius:6px;">${v.showLoginPassword ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.6 18.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a18.6 18.6 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>` : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>`}</button>
+              </div>
             </div>
             <button data-click="${H(v.handleLogin)}" ${v.loggingIn ? 'disabled' : ''} style="margin-top:8px; padding:13px; border-radius:10px; border:none; background:${t.navy}; color:#fff; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit; opacity:${v.loggingIn ? '0.75' : '1'};">${esc(v.loginBtnLabel)}</button>
           </div>
