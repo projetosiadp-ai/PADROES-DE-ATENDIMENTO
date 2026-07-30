@@ -347,11 +347,16 @@ class App {
     const activeAcesso = st.acessos.find(a => a.id === st.activeAcessoId) || st.acessos[0];
     const acessoMsgs = st.mensagens.filter(m => m.acesso_id === activeAcesso.id);
     const acessoCats = st.categorias.filter(c => c.acesso_id === activeAcesso.id);
-    const userAcessoLinks = st.acessoMembros.filter(m => {
-      const acc = st.acessos.find(a => a.id === m.acesso_id);
-      return acc && acc.ativo;
-    });
     const isSuperAdmin = profile.role === 'superadmin';
+    // Superadmin pode alternar entre TODOS os Acessos ativos (não só os que tem
+    // vínculo em acesso_membros) — senão um Acesso recém-criado nunca apareceria
+    // no seletor para ser gerenciado.
+    const userAcessoLinks = isSuperAdmin
+      ? st.acessos.filter(a => a.ativo).map(a => ({ acesso_id: a.id }))
+      : st.acessoMembros.filter(m => {
+          const acc = st.acessos.find(a => a.id === m.acesso_id);
+          return acc && acc.ativo;
+        });
     const localAdminEntry = st.acessoMembros.find(m => m.acesso_id === activeAcesso.id);
     const isAdmin = isSuperAdmin || (localAdminEntry && localAdminEntry.is_admin_local);
 
@@ -741,10 +746,11 @@ class App {
     const f = this.state.acessoForm;
     if (!f.nome.trim()) { this.showToast('Informe o nome do Acesso.', 'error'); return; }
     try {
-      await api.saveAcesso({ nome: f.nome.trim(), descricao: f.descricao, cor: f.cor });
+      const created = await api.saveAcesso({ nome: f.nome.trim(), descricao: f.descricao, cor: f.cor });
       this.setState({ showAcessoModal: false });
       await this.refreshAppData(this.state.currentUser);
-      this.showToast('Acesso criado com sucesso!', 'success');
+      this.setState({ activeAcessoId: created.id, adminTab: 'categorias' });
+      this.showToast('Acesso criado! Gerencie as categorias e mensagens dele abaixo.', 'success');
     } catch (e) { this.showToast(e.message, 'error'); }
   }
   async toggleAcessoStatus(id, currentAtivo) {

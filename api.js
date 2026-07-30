@@ -60,7 +60,17 @@ export async function fetchAppData(userId) {
   if (pErr) fail('Não foi possível carregar o perfil', pErr);
   if (amErr) fail('Não foi possível carregar seus acessos', amErr);
 
-  const acessoIds = acessoMembros.map(m => m.acesso_id);
+  // Superadmin enxerga todos os Acessos (a RLS já permite isso via is_superadmin()),
+  // não só os que tem vínculo em acesso_membros — senão um Acesso recém-criado
+  // nunca apareceria pra quem criou até alguém vincular manualmente o usuário a ele.
+  let acessoIds;
+  if (profile.role === 'superadmin') {
+    const { data: allAcessos, error: allErr } = await supabase.from('acessos').select('id');
+    if (allErr) fail('Não foi possível carregar os acessos', allErr);
+    acessoIds = allAcessos.map(a => a.id);
+  } else {
+    acessoIds = acessoMembros.map(m => m.acesso_id);
+  }
   if (acessoIds.length === 0) return { profile, acessos: [], acessoMembros: [], categorias: [], mensagens: [], favoritos: [], recentes: [] };
 
   const [{ data: acessos, error: aErr }, { data: categorias, error: cErr }, { data: mensagens, error: mErr },
@@ -118,6 +128,7 @@ export async function saveAcesso({ nome, descricao, cor }) {
   const defaults = ['Boas-vindas', 'Resolução de Problema', 'Pendências', 'Encerramento'];
   const { error: catErr } = await supabase.from('categorias').insert(defaults.map((n, i) => ({ acesso_id: data.id, nome: n, ordem: i })));
   if (catErr) fail('Acesso criado, mas falhou ao criar categorias padrão', catErr);
+  return data;
 }
 
 export async function toggleAcessoStatus(id, ativo) {
