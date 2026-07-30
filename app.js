@@ -1231,47 +1231,47 @@ class App {
     if (v.showUsersModal) {
       out += `
       <div role="presentation" data-click="${H(v.closeUsersModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
-        <div role="dialog" aria-modal="true" aria-label="Usuários vinculados" data-click="${stay}" style="width:100%; max-width:480px; max-height:80vh; overflow-y:auto; background:${t.modalSolidBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
-          <div style="font-size:18px; font-weight:800; margin-bottom:4px;">Usuários vinculados</div>
-          <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:16px;">${esc(v.usersModalAcessoNome)}</div>
+        <div role="dialog" aria-modal="true" aria-label="Usuários vinculados" data-click="${stay}" style="width:100%; max-width:520px; max-height:90vh; overflow-y:auto; background:${t.modalSolidBg}; border-radius:16px; padding:18px; animation:dp-modal-in .18s ease-out;">
+          <div style="font-size:16px; font-weight:800; margin-bottom:2px;">Usuários vinculados</div>
+          <div style="font-size:12px; color:${t.textSecondary}; margin-bottom:12px;">${esc(v.usersModalAcessoNome)}</div>
           ${v.acessoUsersLoading
             ? `<div style="font-size:13px; color:${t.textSecondary};">Carregando…</div>`
             : `
               ${v.usersModalRows.length === 0
-                ? `<div style="font-size:13px; color:${t.textSecondary}; margin-bottom:16px;">Nenhum usuário vinculado a este acesso ainda.</div>`
-                : `<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;">
+                ? `<div style="font-size:13px; color:${t.textSecondary}; margin-bottom:12px;">Nenhum usuário vinculado a este acesso ainda.</div>`
+                : `<div style="display:flex; flex-direction:column; gap:6px; margin-bottom:12px;">
                     ${v.usersModalRows.map(u => `
-                      <div data-key="${esc(u.userId)}" style="background:${t.pageBg}; border:1px solid ${t.border}; border-radius:${t.radiusSm}; padding:12px 14px;">
-                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-                          <div>
-                            <div style="font-weight:700; font-size:14px;">${esc(u.nome)}</div>
-                            <div style="font-size:12px; color:${t.textSecondary};">${esc(u.email)} · ${esc(u.roleLabel)}</div>
+                      <div data-key="${esc(u.userId)}" style="background:${t.pageBg}; border:1px solid ${t.border}; border-radius:${t.radiusSm}; padding:10px 12px;">
+                        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:6px;">
+                          <div style="min-width:0;">
+                            <div style="font-weight:700; font-size:13px;">${esc(u.nome)}</div>
+                            <div style="font-size:11px; color:${t.textSecondary}; overflow:hidden; text-overflow:ellipsis;">${esc(u.email)} · ${esc(u.roleLabel)}</div>
                           </div>
-                          <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                            <button data-click="${H(u.onToggleAdmin)}" style="border:1px solid ${t.border}; background:${u.isAdminLocal ? t.navy : 'transparent'}; color:${u.isAdminLocal ? '#fff' : t.text}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer;">${u.isAdminLocal ? 'Remover admin' : 'Tornar admin'}</button>
-                            <button data-click="${H(u.onResetPassword)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer;">Redefinir senha</button>
-                            <button data-click="${H(u.onUnlink)}" style="border:none; background:#FEE2E2; color:#B91C1C; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer;">Remover</button>
+                          <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; flex-shrink:0;">
+                            <button data-click="${H(u.onToggleAdmin)}" style="border:1px solid ${t.border}; background:${u.isAdminLocal ? t.navy : 'transparent'}; color:${u.isAdminLocal ? '#fff' : t.text}; font-size:10px; font-weight:700; padding:5px 8px; border-radius:5px; cursor:pointer; white-space:nowrap;">${u.isAdminLocal ? 'Sem admin' : 'Admin local'}</button>
+                            <button data-click="${H(u.onResetPassword)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:10px; font-weight:700; padding:5px 8px; border-radius:5px; cursor:pointer; white-space:nowrap;">Redefinir</button>
+                            <button data-click="${H(u.onUnlink)}" style="grid-column:1 / -1; border:none; background:#FEE2E2; color:#B91C1C; font-size:10px; font-weight:700; padding:5px 8px; border-radius:5px; cursor:pointer;">Remover deste acesso</button>
                           </div>
                         </div>
                         ${u.justReset ? `
-                          <div style="margin-top:10px; padding:10px 12px; background:#DCFCE7; border-radius:8px;">
-                            <div style="font-size:11px; font-weight:800; color:#166534; text-transform:uppercase; margin-bottom:4px;">Nova senha temporária (copie agora, só aparece uma vez)</div>
-                            <div style="font-family:monospace; font-size:14px; font-weight:700; color:#14532D; user-select:all;">${esc(u.justReset)}</div>
+                          <div style="padding:8px 10px; background:#DCFCE7; border-radius:6px;">
+                            <div style="font-size:10px; font-weight:800; color:#166534; text-transform:uppercase; margin-bottom:2px;">Senha temporária (copie agora)</div>
+                            <div style="font-family:monospace; font-size:13px; font-weight:700; color:#14532D; user-select:all;">${esc(u.justReset)}</div>
                           </div>` : ''}
                       </div>`).join('')}
                   </div>`}
-              <div style="border-top:1px solid ${t.border}; padding-top:14px;">
-                <div style="font-size:12px; font-weight:700; color:${t.textSecondary}; margin-bottom:8px;">Vincular usuário a este acesso</div>
-                <div style="display:flex; gap:8px;">
-                  <select data-change="${H(v.onAddUserSelectChange)}" style="flex:1; padding:9px 10px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;">
-                    <option value="">Selecione um usuário…</option>
-                    ${v.addUserOptions.map(p => `<option value="${esc(p.id)}" ${p.id === v.addUserSelectedId ? 'selected' : ''}>${esc(p.nome)} (${esc(p.email)})</option>`).join('')}
+              <div style="border-top:1px solid ${t.border}; padding-top:10px;">
+                <div style="font-size:11px; font-weight:700; color:${t.textSecondary}; margin-bottom:6px; text-transform:uppercase;">Adicionar usuário</div>
+                <div style="display:flex; gap:6px;">
+                  <select data-change="${H(v.onAddUserSelectChange)}" style="flex:1; padding:8px 8px; border-radius:6px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:12px; font-family:inherit;">
+                    <option value="">Selecione…</option>
+                    ${v.addUserOptions.map(p => `<option value="${esc(p.id)}" ${p.id === v.addUserSelectedId ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}
                   </select>
-                  <button data-click="${H(v.addUserToAcesso)}" style="border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; padding:0 16px; border-radius:8px; cursor:pointer;">Vincular</button>
+                  <button data-click="${H(v.addUserToAcesso)}" style="border:none; background:${t.navy}; color:#fff; font-size:12px; font-weight:700; padding:0 12px; border-radius:6px; cursor:pointer; white-space:nowrap;">Vincular</button>
                 </div>
               </div>`}
-          <div style="display:flex; justify-content:flex-end; margin-top:20px;">
-            <button data-click="${H(v.closeUsersModal)}" style="padding:10px 18px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Concluir</button>
+          <div style="display:flex; justify-content:flex-end; margin-top:12px;">
+            <button data-click="${H(v.closeUsersModal)}" style="padding:8px 16px; border-radius:6px; border:none; background:${t.navy}; color:#fff; font-size:12px; font-weight:700; cursor:pointer;">Concluir</button>
           </div>
         </div>
       </div>`;
