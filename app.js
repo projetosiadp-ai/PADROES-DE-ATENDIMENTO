@@ -526,6 +526,7 @@ class App {
       adminSearchQuery: st.adminSearchQuery, onAdminSearchChange: (e) => this.setState({ adminSearchQuery: e.target.value }),
       adminMsgRows, catRows, acessoRows,
       openCreateMsg: () => this.openCreateMsg(),
+      showUsersModal: st.showUsersModal,
       usersModalAcessoNome: (st.acessos.find(a => a.id === st.usersModalAcessoId) || {}).nome || '',
       acessoUsersLoading: st.acessoUsersLoading,
       usersModalRows: st.acessoUsers.map(u => ({
