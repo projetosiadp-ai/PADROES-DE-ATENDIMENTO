@@ -160,6 +160,61 @@ export async function incrementFrequencia(mensagemId) {
   if (error) fail('Não foi possível atualizar a frequência', error);
 }
 
+export async function solicitarCriacaoMensagem({ acessoId, categoria, titulo, tags, conteudo, userId }) {
+  const { error } = await supabase.from('solicitacoes_mensagem').insert({
+    acesso_id: acessoId, tipo: 'criacao', categoria, titulo, tags, conteudo, solicitado_por: userId
+  });
+  if (error) fail('Não foi possível enviar a solicitação de criação', error);
+}
+
+export async function solicitarEdicaoMensagem({ acessoId, mensagemId, categoria, titulo, tags, conteudo, anterior, userId }) {
+  const { error } = await supabase.from('solicitacoes_mensagem').insert({
+    acesso_id: acessoId, tipo: 'edicao', mensagem_id: mensagemId,
+    categoria, titulo, tags, conteudo,
+    categoria_anterior: anterior.categoria, titulo_anterior: anterior.titulo,
+    tags_anterior: anterior.tags, conteudo_anterior: anterior.conteudo,
+    solicitado_por: userId
+  });
+  if (error) fail('Não foi possível enviar a solicitação de edição', error);
+}
+
+export async function solicitarExclusaoMensagem({ acessoId, mensagemId, anterior, userId }) {
+  const { error } = await supabase.from('solicitacoes_mensagem').insert({
+    acesso_id: acessoId, tipo: 'exclusao', mensagem_id: mensagemId,
+    categoria_anterior: anterior.categoria, titulo_anterior: anterior.titulo,
+    tags_anterior: anterior.tags, conteudo_anterior: anterior.conteudo,
+    solicitado_por: userId
+  });
+  if (error) fail('Não foi possível enviar a solicitação de exclusão', error);
+}
+
+export async function listarSolicitacoesPendentes() {
+  const { data, error } = await supabase.from('solicitacoes_mensagem')
+    .select('*, acessos(nome), solicitante:profiles!solicitacoes_mensagem_solicitado_por_fkey(nome)')
+    .eq('status', 'pendente')
+    .order('criado_em', { ascending: true });
+  if (error) fail('Não foi possível carregar as solicitações pendentes', error);
+  return data;
+}
+
+export async function contarSolicitacoesPendentes() {
+  const { count, error } = await supabase.from('solicitacoes_mensagem')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'pendente');
+  if (error) fail('Não foi possível contar as solicitações pendentes', error);
+  return count || 0;
+}
+
+export async function aprovarSolicitacao(id) {
+  const { error } = await supabase.rpc('aprovar_solicitacao', { p_id: id });
+  if (error) fail('Não foi possível aprovar a solicitação', error);
+}
+
+export async function rejeitarSolicitacao(id, motivo) {
+  const { error } = await supabase.rpc('rejeitar_solicitacao', { p_id: id, p_motivo: motivo });
+  if (error) fail('Não foi possível rejeitar a solicitação', error);
+}
+
 export async function adminCreateUser(input) {
   const { data, error } = await supabase.functions.invoke('admin-create-user', { body: input });
   if (error) return { ok: false, error: error.message };

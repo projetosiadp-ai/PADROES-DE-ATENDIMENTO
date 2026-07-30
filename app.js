@@ -121,6 +121,11 @@ class App {
       acessoMembros: [],
       categorias: [],
       mensagens: [],
+      solicitacoesPendentes: [],
+      showApprovalPopup: false,
+      approvalPopupSeenThisSession: false,
+      showSolicitacaoModal: false, viewingSolicitacaoId: null,
+      solicitacaoRejectMode: false, rejectMotivo: '',
       loginEmail: '', loginPassword: '', loginError: '', loggingIn: false
     };
   }
@@ -220,6 +225,8 @@ class App {
         else if (st.showCatModal) this.setState({ showCatModal: false });
         else if (st.showAcessoModal) this.setState({ showAcessoModal: false });
         else if (st.showUsersModal) this.setState({ showUsersModal: false });
+        else if (st.showSolicitacaoModal) this.setState({ showSolicitacaoModal: false, solicitacaoRejectMode: false });
+        else if (st.showApprovalPopup) this.setState({ showApprovalPopup: false });
         else if (st.confirm.open) this.setState({ confirm: { open: false, title: '', message: '', action: null } });
         else if (st.userMenuOpen) this.setState({ userMenuOpen: false });
         else if (st.searchQuery) this.setState({ searchQuery: '' });
@@ -235,6 +242,9 @@ class App {
     try {
       const data = await api.fetchAppData(session.user.id);
       const firstAcessoId = data.acessos[0] ? data.acessos[0].id : null;
+      const isSuperAdmin = data.profile.role === 'superadmin';
+      const solicitacoesPendentes = isSuperAdmin ? await api.listarSolicitacoesPendentes() : [];
+      const shouldPopup = isSuperAdmin && solicitacoesPendentes.length > 0 && !this.state.approvalPopupSeenThisSession;
       this.setState({
         currentUser: { user: session.user, profile: data.profile },
         profileId: session.user.id,
@@ -246,6 +256,9 @@ class App {
         recentIds: data.recentes.map(r => r.mensagem_id),
         activeAcessoId: this.state.activeAcessoId && data.acessos.some(a => a.id === this.state.activeAcessoId)
           ? this.state.activeAcessoId : firstAcessoId,
+        solicitacoesPendentes,
+        showApprovalPopup: shouldPopup,
+        approvalPopupSeenThisSession: this.state.approvalPopupSeenThisSession || shouldPopup,
         loading: false, loadError: ''
       });
     } catch (e) {
@@ -379,6 +392,7 @@ class App {
         onCopy: () => copyMessage(m), copied: st.copiedId === m.id, copyLabel: st.copiedId === m.id ? 'Copiado!' : 'Copiar',
         copyBtnBg: st.copiedId === m.id ? '#16A34A' : theme.navy,
         onEdit: () => this.openEditMsg(m),
+        onDelete: () => this.requestDeleteMsg(m),
         borderColor: isFav ? '#F59E0B' : theme.border,
         shadow: isFav ? '0 0 0 1px #F59E0B22' : 'none'
       };
@@ -456,15 +470,22 @@ class App {
       isDashboard: !(st.appView === 'admin' && isAdmin), isAdminView: st.appView === 'admin' && isAdmin,
       adminTab: st.adminTab || 'mensagens',
       isAdminMsgs: (st.adminTab || 'mensagens') === 'mensagens', isAdminCats: st.adminTab === 'categorias', isAdminAcessos: st.adminTab === 'acessos',
+      isAdminSolicitacoes: st.adminTab === 'solicitacoes',
       tabMsgsBg: (st.adminTab || 'mensagens') === 'mensagens' ? theme.navy : 'transparent', tabMsgsColor: (st.adminTab || 'mensagens') === 'mensagens' ? '#fff' : theme.text,
       tabCatsBg: st.adminTab === 'categorias' ? theme.navy : 'transparent', tabCatsColor: st.adminTab === 'categorias' ? '#fff' : theme.text,
       tabAcessosBg: st.adminTab === 'acessos' ? theme.navy : 'transparent', tabAcessosColor: st.adminTab === 'acessos' ? '#fff' : theme.text,
+      tabSolicitacoesBg: st.adminTab === 'solicitacoes' ? theme.navy : 'transparent', tabSolicitacoesColor: st.adminTab === 'solicitacoes' ? '#fff' : theme.text,
       isSuperAdmin, isAdmin,
       goDashboard: () => this.setState({ appView: 'dashboard', userMenuOpen: false }),
       goAdmin: () => this.setState({ appView: 'admin', userMenuOpen: false, adminTab: 'mensagens' }),
       setAdminTabMsgs: () => this.setState({ adminTab: 'mensagens' }),
       setAdminTabCats: () => this.setState({ adminTab: 'categorias' }),
       setAdminTabAcessos: () => this.setState({ adminTab: 'acessos' }),
+      setAdminTabSolicitacoes: () => this.setState({ adminTab: 'solicitacoes' }),
+
+      solicitacoesCount: st.solicitacoesPendentes.length,
+      solicitacoesTabLabel: st.solicitacoesPendentes.length > 0 ? `Solicitações (${st.solicitacoesPendentes.length})` : 'Solicitações',
+      goApprovals: () => this.setState({ appView: 'admin', adminTab: 'solicitacoes', showApprovalPopup: false, userMenuOpen: false }),
 
       currentUser: { nome: profile.nome, iniciais: profile.nome.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(), perfilLabel: isSuperAdmin ? 'Administrador' : (isAdmin ? 'Admin local' : 'Usuário') },
       userMenuOpen: !!st.userMenuOpen, toggleUserMenu: () => this.setState({ userMenuOpen: !st.userMenuOpen }),
@@ -532,6 +553,46 @@ class App {
 
       confirm: st.confirm, closeConfirm: () => this.setState({ confirm: { open: false, title: '', message: '', action: null } }),
       runConfirm: () => { if (st.confirm.action) st.confirm.action(); this.setState({ confirm: { open: false, title: '', message: '', action: null } }); },
+
+      showApprovalPopup: st.showApprovalPopup,
+      approvalPopupCount: st.solicitacoesPendentes.length,
+      dismissApprovalPopup: () => this.setState({ showApprovalPopup: false }),
+
+      solicitacaoRows: st.solicitacoesPendentes.map(s => ({
+        id: s.id,
+        departamento: s.acessos ? s.acessos.nome : '—',
+        usuario: s.solicitante ? s.solicitante.nome : '—',
+        tipoLabel: s.tipo === 'criacao' ? 'Criação' : s.tipo === 'edicao' ? 'Edição' : 'Exclusão',
+        dataLabel: new Date(s.criado_em).toLocaleString('pt-BR'),
+        onOpen: () => this.setState({ showSolicitacaoModal: true, viewingSolicitacaoId: s.id, solicitacaoRejectMode: false, rejectMotivo: '' })
+      })),
+      hasSolicitacoes: st.solicitacoesPendentes.length > 0,
+
+      showSolicitacaoModal: st.showSolicitacaoModal,
+      closeSolicitacaoModal: () => this.setState({ showSolicitacaoModal: false, solicitacaoRejectMode: false }),
+      viewingSolicitacao: (() => {
+        const s = st.solicitacoesPendentes.find(x => x.id === st.viewingSolicitacaoId);
+        if (!s) return null;
+        return {
+          id: s.id,
+          departamento: s.acessos ? s.acessos.nome : '—',
+          usuario: s.solicitante ? s.solicitante.nome : '—',
+          tipoLabel: s.tipo === 'criacao' ? 'Criação' : s.tipo === 'edicao' ? 'Edição' : 'Exclusão',
+          dataLabel: new Date(s.criado_em).toLocaleString('pt-BR'),
+          isCriacao: s.tipo === 'criacao',
+          categoriaAnterior: s.categoria_anterior, categoriaNova: s.categoria,
+          tituloAnterior: s.titulo_anterior, tituloNovo: s.titulo,
+          conteudoAnterior: s.conteudo_anterior, conteudoNovo: s.conteudo,
+          isRejectMode: st.solicitacaoRejectMode,
+          rejectMotivo: st.rejectMotivo
+        };
+      })(),
+      aprovarViewing: () => this.aprovarSolicitacaoViewing(),
+      startReject: () => this.setState({ solicitacaoRejectMode: true }),
+      cancelReject: () => this.setState({ solicitacaoRejectMode: false, rejectMotivo: '' }),
+      onRejectMotivoChange: (e) => this.setState({ rejectMotivo: e.target.value }),
+      confirmReject: () => this.rejeitarSolicitacaoViewing(),
+
       toast: st.toast
     };
   }
@@ -566,6 +627,14 @@ class App {
   openEditMsg(msg) {
     this.setState({ showMsgModal: true, editingMsgId: msg.id, msgForm: { categoria: msg.categoria, titulo: msg.titulo, tagInput: '', tags: [...msg.tags], conteudo: msg.conteudo } });
   }
+
+  isAdminNow(acessoId) {
+    const st = this.state;
+    if (!st.currentUser) return false;
+    if (st.currentUser.profile.role === 'superadmin') return true;
+    const entry = st.acessoMembros.find(m => m.acesso_id === acessoId);
+    return !!(entry && entry.is_admin_local);
+  }
   addMsgTag() {
     const val = this.state.msgForm.tagInput.trim();
     if (!val) return;
@@ -575,8 +644,26 @@ class App {
     const f = this.state.msgForm;
     if (!f.titulo.trim() || !f.conteudo.trim()) { this.showToast('Preencha título e conteúdo.', 'error'); return; }
     const wasCreate = !this.state.editingMsgId;
+    const acessoId = this.state.activeAcessoId;
+    const userId = this.state.currentUser.profile.id;
+
+    if (!this.isAdminNow(acessoId)) {
+      try {
+        if (wasCreate) {
+          await api.solicitarCriacaoMensagem({ acessoId, categoria: f.categoria, titulo: f.titulo, tags: f.tags, conteudo: f.conteudo, userId });
+        } else {
+          const anterior = this.state.mensagens.find(m => m.id === this.state.editingMsgId);
+          await api.solicitarEdicaoMensagem({ acessoId, mensagemId: this.state.editingMsgId, categoria: f.categoria, titulo: f.titulo, tags: f.tags, conteudo: f.conteudo, anterior, userId });
+        }
+        this.setState({ showMsgModal: false });
+        await this.refreshAppData(this.state.currentUser);
+        this.showToast('Enviado para aprovação. Um administrador irá revisar.', 'success');
+      } catch (e) { this.showToast(e.message, 'error'); }
+      return;
+    }
+
     try {
-      const saved = await api.saveMensagem({ id: this.state.editingMsgId, acessoId: this.state.activeAcessoId, categoria: f.categoria, titulo: f.titulo, tags: f.tags, conteudo: f.conteudo });
+      const saved = await api.saveMensagem({ id: this.state.editingMsgId, acessoId, categoria: f.categoria, titulo: f.titulo, tags: f.tags, conteudo: f.conteudo });
       this.setState({ showMsgModal: false });
       await this.refreshAppData(this.state.currentUser);
       if (wasCreate && saved) {
@@ -594,6 +681,42 @@ class App {
       await api.deleteMensagem(id);
       await this.refreshAppData(this.state.currentUser);
       this.showToast('Mensagem excluída.', 'success');
+    } catch (e) { this.showToast(e.message, 'error'); }
+  }
+  requestDeleteMsg(msg) {
+    if (this.isAdminNow(msg.acesso_id)) {
+      this.requestDelete('Excluir mensagem', `Tem certeza que deseja excluir "${msg.titulo}"? Esta ação não pode ser desfeita.`, () => this.deleteMsg(msg.id));
+    } else {
+      this.requestDelete('Solicitar exclusão', `Deseja solicitar a exclusão de "${msg.titulo}"? Um administrador precisará aprovar antes que a mensagem seja removida.`, () => this.solicitarExclusaoMsg(msg));
+    }
+  }
+  async solicitarExclusaoMsg(msg) {
+    try {
+      await api.solicitarExclusaoMensagem({ acessoId: msg.acesso_id, mensagemId: msg.id, anterior: msg, userId: this.state.currentUser.profile.id });
+      await this.refreshAppData(this.state.currentUser);
+      this.showToast('Solicitação de exclusão enviada para aprovação.', 'success');
+    } catch (e) { this.showToast(e.message, 'error'); }
+  }
+
+  async aprovarSolicitacaoViewing() {
+    const id = this.state.viewingSolicitacaoId;
+    try {
+      await api.aprovarSolicitacao(id);
+      this.setState({ showSolicitacaoModal: false });
+      await this.refreshAppData(this.state.currentUser);
+      this.showToast('Solicitação aprovada.', 'success');
+    } catch (e) { this.showToast(e.message, 'error'); }
+  }
+
+  async rejeitarSolicitacaoViewing() {
+    const id = this.state.viewingSolicitacaoId;
+    const motivo = this.state.rejectMotivo.trim();
+    if (!motivo) { this.showToast('Informe o motivo da rejeição.', 'error'); return; }
+    try {
+      await api.rejeitarSolicitacao(id, motivo);
+      this.setState({ showSolicitacaoModal: false, solicitacaoRejectMode: false, rejectMotivo: '' });
+      await this.refreshAppData(this.state.currentUser);
+      this.showToast('Solicitação rejeitada.', 'success');
     } catch (e) { this.showToast(e.message, 'error'); }
   }
   openEditCat(cat) { this.setState({ showCatModal: true, editingCatId: cat.id, catForm: { nome: cat.nome } }); }
@@ -731,7 +854,7 @@ class App {
             </div>
             ${v.userMenuOpen ? `
               <div style="position:absolute; right:0; top:44px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusSm}; box-shadow:${t.shadowLg}; min-width:200px; padding:8px; z-index:50;">
-                ${v.isAdmin ? `<div data-click="${H(v.goAdmin)}" style="padding:10px 12px; border-radius:${t.radiusSm}; cursor:pointer; font-size:13px; font-weight:700; color:${t.text};">Painel Administrativo</div>` : ''}
+                ${v.isAdmin ? `<div data-click="${H(v.goAdmin)}" style="padding:10px 12px; border-radius:${t.radiusSm}; cursor:pointer; font-size:13px; font-weight:700; color:${t.text}; display:flex; align-items:center; justify-content:space-between; gap:8px;">Painel Administrativo${v.isSuperAdmin && v.solicitacoesCount > 0 ? `<span style="background:#DC2626; color:#fff; font-size:10px; font-weight:800; padding:2px 7px; border-radius:999px;">${v.solicitacoesCount}</span>` : ''}</div>` : ''}
                 <div data-click="${H(v.logout)}" style="padding:10px 12px; border-radius:${t.radiusSm}; cursor:pointer; font-size:13px; font-weight:700; color:#DC2626;">Sair</div>
               </div>` : ''}
           </div>
@@ -778,7 +901,8 @@ class App {
         <div style="display:flex; align-items:center; justify-content:space-between; margin-top:4px; padding-top:10px; border-top:1px solid ${t.border};">
           <div style="font-size:11px; color:${t.textSecondary}; font-weight:600;">usada ${esc(m.frequencia)}x</div>
           <div style="display:flex; gap:8px;">
-            ${v.isAdmin ? `<button data-click="${H(m.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:${t.radiusSm}; cursor:pointer;">Editar</button>` : ''}
+            <button data-click="${H(m.onDelete)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:${t.radiusSm}; cursor:pointer;">Excluir</button>
+            <button data-click="${H(m.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:${t.radiusSm}; cursor:pointer;">Editar</button>
             <button data-click="${H(m.onCopy)}" style="border:none; background:${m.copyBtnBg}; color:#fff; font-size:12px; font-weight:700; padding:7px 14px; border-radius:${t.radiusSm}; cursor:pointer; display:flex; align-items:center; gap:6px;">${m.copied ? checkIcon : clipboardIcon}${esc(m.copyLabel)}</button>
           </div>
         </div>
@@ -806,6 +930,7 @@ class App {
       </div>
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
         <div style="font-size:14px; font-weight:700; color:${t.textSecondary};">${esc(v.resultsCountLabel)}</div>
+        <button data-click="${H(v.openCreateMsg)}" style="border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; padding:9px 16px; border-radius:${t.radiusSm}; cursor:pointer;">+ Nova mensagem</button>
       </div>
       ${v.hasResults
         ? `<div style="${v.gridStyle}">${v.cardList.map(card).join('')}</div>`
@@ -895,6 +1020,31 @@ class App {
               </div>
             </div>`).join('')}
         </div>`;
+    } else if (v.isAdminSolicitacoes) {
+      content = `
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+          <div style="font-size:20px; font-weight:800;">Solicitações de Aprovação</div>
+        </div>
+        ${v.hasSolicitacoes ? `
+        <div class="dp-table-scroll">
+          <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:14px; overflow:hidden; min-width:640px;">
+            <div style="display:grid; grid-template-columns:1fr 1fr 120px 180px 100px; gap:10px; padding:12px 16px; font-size:11px; font-weight:800; color:${t.textSecondary}; background:${t.pageBg}; text-transform:uppercase;">
+              <div>Departamento</div><div>Usuário</div><div>Tipo</div><div>Data</div><div>Ações</div>
+            </div>
+            ${v.solicitacaoRows.map(row => `
+              <div data-key="${esc(row.id)}" style="display:grid; grid-template-columns:1fr 1fr 120px 180px 100px; gap:10px; padding:12px 16px; font-size:13px; border-top:1px solid ${t.border}; align-items:center;">
+                <div style="font-weight:700;">${esc(row.departamento)}</div>
+                <div>${esc(row.usuario)}</div>
+                <div style="color:${t.textSecondary};">${esc(row.tipoLabel)}</div>
+                <div style="color:${t.textSecondary}; font-size:12px;">${esc(row.dataLabel)}</div>
+                <div><button data-click="${H(row.onOpen)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer;">Analisar</button></div>
+              </div>`).join('')}
+          </div>
+        </div>` : `
+        <div style="text-align:center; padding:60px 20px; background:${t.cardBg}; border:1px dashed ${t.border}; border-radius:16px;">
+          <div style="font-size:16px; font-weight:800; color:${t.text};">Nenhuma solicitação pendente</div>
+          <div style="font-size:13px; color:${t.textSecondary}; margin-top:6px;">Quando um usuário criar, editar ou pedir exclusão de uma mensagem, aparecerá aqui.</div>
+        </div>`}`;
     }
 
     return `
@@ -904,7 +1054,8 @@ class App {
         <div style="height:1px; background:${t.border}; margin:8px 0;"></div>
         <div role="tab" tabindex="0" aria-selected="${v.isAdminMsgs}" data-click="${H(v.setAdminTabMsgs)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:4px; background:${v.tabMsgsBg}; color:${v.tabMsgsColor};">Mensagens</div>
         <div role="tab" tabindex="0" aria-selected="${v.isAdminCats}" data-click="${H(v.setAdminTabCats)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:4px; background:${v.tabCatsBg}; color:${v.tabCatsColor};">Categorias</div>
-        ${v.isSuperAdmin ? `<div role="tab" tabindex="0" aria-selected="${v.isAdminAcessos}" data-click="${H(v.setAdminTabAcessos)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; background:${v.tabAcessosBg}; color:${v.tabAcessosColor};">Acessos</div>` : ''}
+        ${v.isSuperAdmin ? `<div role="tab" tabindex="0" aria-selected="${v.isAdminAcessos}" data-click="${H(v.setAdminTabAcessos)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:4px; background:${v.tabAcessosBg}; color:${v.tabAcessosColor};">Acessos</div>` : ''}
+        ${v.isSuperAdmin ? `<div role="tab" tabindex="0" aria-selected="${v.isAdminSolicitacoes}" data-click="${H(v.setAdminTabSolicitacoes)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; background:${v.tabSolicitacoesBg}; color:${v.tabSolicitacoesColor};">${esc(v.solicitacoesTabLabel)}</div>` : ''}
       </div>
       <div style="flex:1; min-width:0;">
         <div style="font-size:12px; font-weight:700; color:${t.textSecondary}; margin-bottom:14px;">Operando em: <span style="color:${t.cyan};">${esc(v.activeAcesso.nome)}</span></div>
@@ -1023,6 +1174,68 @@ class App {
           <div style="display:flex; justify-content:flex-end; gap:10px;">
             <button data-click="${H(v.closeConfirm)}" style="padding:9px 16px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Cancelar</button>
             <button data-click="${H(v.runConfirm)}" style="padding:9px 16px; border-radius:8px; border:none; background:#DC2626; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Confirmar</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    if (v.showSolicitacaoModal && v.viewingSolicitacao) {
+      const s = v.viewingSolicitacao;
+      const field = (label, before, after) => `
+        <div style="margin-bottom:12px;">
+          <div style="font-size:11px; font-weight:800; color:${t.textSecondary}; text-transform:uppercase; margin-bottom:4px;">${esc(label)}</div>
+          <div style="display:grid; grid-template-columns:${s.isCriacao ? '1fr' : '1fr 1fr'}; gap:10px;">
+            ${s.isCriacao ? '' : `<div style="background:${t.pageBg}; border:1px solid ${t.border}; border-radius:8px; padding:8px 10px; font-size:13px; color:${t.textSecondary}; white-space:pre-wrap;">${esc(before || '—')}</div>`}
+            ${after != null ? `<div style="background:${t.pageBg}; border:1px solid ${t.border}; border-radius:8px; padding:8px 10px; font-size:13px; white-space:pre-wrap;">${esc(after)}</div>` : ''}
+          </div>
+        </div>`;
+      out += `
+      <div role="presentation" data-click="${H(v.closeSolicitacaoModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:110; padding:20px;">
+        <div role="dialog" aria-modal="true" aria-label="Solicitação de ${esc(s.tipoLabel)}" data-click="${stay}" style="width:100%; max-width:560px; max-height:85vh; overflow-y:auto; background:${t.modalSolidBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
+          <div style="font-size:18px; font-weight:800; margin-bottom:4px;">Solicitação de ${esc(s.tipoLabel)}</div>
+          <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:18px;">${esc(s.departamento)} · ${esc(s.usuario)} · ${esc(s.dataLabel)}</div>
+          ${s.tipoLabel === 'Exclusão' ? `
+            <div style="font-size:13px; margin-bottom:10px;">Mensagem a ser excluída:</div>
+            ${field('Título', s.tituloAnterior, null)}
+            ${field('Conteúdo', s.conteudoAnterior, null)}
+          ` : `
+            ${!s.isCriacao ? `<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:6px;">
+              <div style="font-size:11px; font-weight:800; color:${t.textSecondary}; text-transform:uppercase;">Antes</div>
+              <div style="font-size:11px; font-weight:800; color:${t.textSecondary}; text-transform:uppercase;">Depois</div>
+            </div>` : ''}
+            ${field('Categoria', s.categoriaAnterior, s.categoriaNova)}
+            ${field('Título', s.tituloAnterior, s.tituloNovo)}
+            ${field('Conteúdo', s.conteudoAnterior, s.conteudoNovo)}
+          `}
+          ${s.isRejectMode ? `
+            <div style="margin-top:8px;">
+              <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Motivo da rejeição</label>
+              <textarea data-input="${H(v.onRejectMotivoChange)}" rows="3" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit; resize:vertical;">${esc(s.rejectMotivo)}</textarea>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
+              <button data-click="${H(v.cancelReject)}" style="padding:9px 16px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Cancelar</button>
+              <button data-click="${H(v.confirmReject)}" style="padding:9px 16px; border-radius:8px; border:none; background:#DC2626; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Confirmar rejeição</button>
+            </div>
+          ` : `
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
+              <button data-click="${H(v.closeSolicitacaoModal)}" style="padding:9px 16px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Fechar</button>
+              <button data-click="${H(v.startReject)}" style="padding:9px 16px; border-radius:8px; border:none; background:#FEE2E2; color:#B91C1C; font-size:13px; font-weight:700; cursor:pointer;">Rejeitar</button>
+              <button data-click="${H(v.aprovarViewing)}" style="padding:9px 16px; border-radius:8px; border:none; background:#16A34A; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Aprovar</button>
+            </div>
+          `}
+        </div>
+      </div>`;
+    }
+
+    if (v.showApprovalPopup) {
+      out += `
+      <div role="presentation" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:120; padding:20px;">
+        <div role="alertdialog" aria-modal="true" aria-label="Solicitações pendentes" style="width:100%; max-width:380px; background:${t.modalSolidBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
+          <div style="font-size:18px; font-weight:800; margin-bottom:8px;">Solicitações pendentes</div>
+          <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:20px; line-height:1.5;">Há ${v.approvalPopupCount} solicitaç${v.approvalPopupCount === 1 ? 'ão' : 'ões'} de mensagem aguardando sua aprovação.</div>
+          <div style="display:flex; justify-content:flex-end; gap:10px;">
+            <button data-click="${H(v.dismissApprovalPopup)}" style="padding:9px 16px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Dispensar</button>
+            <button data-click="${H(v.goApprovals)}" style="padding:9px 16px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Ver solicitações</button>
           </div>
         </div>
       </div>`;

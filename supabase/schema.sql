@@ -139,6 +139,103 @@ as $$
   );
 $$;
 
+-- ---------- solicitacoes_mensagem (staging para o fluxo de aprovação) ----------
+-- Usuários comuns (não admin local, não superadmin) não escrevem em `mensagens`
+-- diretamente: toda criação/edição/exclusão que eles fazem vira uma linha aqui,
+-- pendente, até um superadmin aprovar ou rejeitar. Fica como tabela separada
+-- (staging) em vez de uma coluna `status` em `mensagens` para que `mensagens`
+-- só contenha conteúdo já publicado — evita vazar rascunhos pendentes via
+-- favoritos/recentes/incremento de frequência.
+create table public.solicitacoes_mensagem (
+  id uuid primary key default gen_random_uuid(),
+  acesso_id uuid not null references public.acessos(id) on delete cascade,
+  mensagem_id uuid references public.mensagens(id) on delete cascade,
+  tipo text not null check (tipo in ('criacao','edicao','exclusao')),
+  status text not null default 'pendente' check (status in ('pendente','aprovada','rejeitada')),
+
+  -- snapshot proposto (o que deveria valer se aprovado)
+  categoria text,
+  titulo text,
+  conteudo text,
+  tags text[],
+
+  -- snapshot anterior (para exibir antes/depois em edição/exclusão)
+  categoria_anterior text,
+  titulo_anterior text,
+  conteudo_anterior text,
+  tags_anterior text[],
+
+  solicitado_por uuid not null references public.profiles(id),
+  criado_em timestamptz not null default now(),
+  revisado_por uuid references public.profiles(id),
+  revisado_em timestamptz,
+  motivo_rejeicao text,
+
+  constraint solicitacoes_mensagem_tipo_mensagem_ck check (
+    (tipo = 'criacao' and mensagem_id is null)
+    or (tipo in ('edicao','exclusao') and mensagem_id is not null)
+  )
+);
+
+-- ---------- aprovar/rejeitar solicitação (atômico, só superadmin) ----------
+-- Aplica o efeito em `mensagens` (insert/update/delete conforme o tipo) e marca
+-- o status da solicitação numa única transação — o cliente comum nunca precisa
+-- de permissão de escrita direta em `mensagens`.
+create function public.aprovar_solicitacao(p_id uuid)
+returns void
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_sol record;
+begin
+  if not public.is_superadmin() then
+    raise exception 'apenas superadmin pode aprovar solicitações';
+  end if;
+
+  select * into v_sol from public.solicitacoes_mensagem where id = p_id and status = 'pendente';
+  if v_sol is null then
+    raise exception 'solicitação não encontrada ou já revisada';
+  end if;
+
+  if v_sol.tipo = 'criacao' then
+    insert into public.mensagens (acesso_id, categoria, titulo, conteudo, tags, created_by)
+    values (v_sol.acesso_id, v_sol.categoria, v_sol.titulo, v_sol.conteudo, coalesce(v_sol.tags, '{}'), v_sol.solicitado_por)
+    returning id into v_sol.mensagem_id;
+  elsif v_sol.tipo = 'edicao' then
+    update public.mensagens
+      set categoria = v_sol.categoria, titulo = v_sol.titulo, conteudo = v_sol.conteudo, tags = coalesce(v_sol.tags, '{}'), updated_at = now()
+      where id = v_sol.mensagem_id;
+  elsif v_sol.tipo = 'exclusao' then
+    delete from public.mensagens where id = v_sol.mensagem_id;
+  end if;
+
+  update public.solicitacoes_mensagem
+    set status = 'aprovada', mensagem_id = v_sol.mensagem_id, revisado_por = auth.uid(), revisado_em = now()
+    where id = p_id;
+end;
+$$;
+
+create function public.rejeitar_solicitacao(p_id uuid, p_motivo text)
+returns void
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  if not public.is_superadmin() then
+    raise exception 'apenas superadmin pode rejeitar solicitações';
+  end if;
+
+  update public.solicitacoes_mensagem
+    set status = 'rejeitada', motivo_rejeicao = p_motivo, revisado_por = auth.uid(), revisado_em = now()
+    where id = p_id and status = 'pendente';
+
+  if not found then
+    raise exception 'solicitação não encontrada ou já revisada';
+  end if;
+end;
+$$;
+
 -- ============================================================
 -- RLS
 -- ============================================================
@@ -149,6 +246,7 @@ alter table public.categorias enable row level security;
 alter table public.mensagens enable row level security;
 alter table public.favoritos enable row level security;
 alter table public.recentes enable row level security;
+alter table public.solicitacoes_mensagem enable row level security;
 
 create policy "profiles_select_own_or_superadmin" on public.profiles
   for select using (
@@ -221,6 +319,26 @@ create policy "recentes_own" on public.recentes
     )
   );
 
+create policy "solicitacoes_select_members_or_superadmin" on public.solicitacoes_mensagem
+  for select using (
+    exists (select 1 from public.acesso_membros am where am.acesso_id = solicitacoes_mensagem.acesso_id and am.user_id = auth.uid())
+    or public.is_superadmin()
+  );
+
+create policy "solicitacoes_insert_members" on public.solicitacoes_mensagem
+  for insert with check (
+    solicitado_por = auth.uid()
+    and exists (select 1 from public.acesso_membros am where am.acesso_id = solicitacoes_mensagem.acesso_id and am.user_id = auth.uid())
+  );
+
+-- Ninguém atualiza a tabela diretamente (mesmo superadmin) — só via as functions
+-- SECURITY DEFINER acima, que aplicam o efeito em `mensagens` atomicamente junto
+-- com a mudança de status. Esta policy existe como defesa em profundidade caso
+-- alguém tente um UPDATE direto via REST/SQL fora das functions.
+create policy "solicitacoes_update_superadmin" on public.solicitacoes_mensagem
+  for update using (public.is_superadmin())
+  with check (public.is_superadmin());
+
 -- ============================================================
 -- Hardening de EXECUTE — funções SECURITY DEFINER não devem ficar
 -- expostas via /rest/v1/rpc/ para PUBLIC (que anon/authenticated herdam
@@ -237,6 +355,12 @@ grant execute on function public.is_acesso_admin(uuid) to authenticated;
 
 revoke execute on function public.is_superadmin() from public;
 grant execute on function public.is_superadmin() to authenticated;
+
+revoke execute on function public.aprovar_solicitacao(uuid) from public;
+grant execute on function public.aprovar_solicitacao(uuid) to authenticated;
+
+revoke execute on function public.rejeitar_solicitacao(uuid, text) from public;
+grant execute on function public.rejeitar_solicitacao(uuid, text) to authenticated;
 
 -- ============================================================
 -- SEED — acesso, categorias e mensagens do protótipo
