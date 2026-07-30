@@ -82,11 +82,13 @@ export async function fetchAppData(userId) {
 
 export async function saveMensagem({ id, acessoId, categoria, titulo, tags, conteudo }) {
   if (id) {
-    const { error } = await supabase.from('mensagens').update({ categoria, titulo, tags, conteudo, updated_at: new Date().toISOString() }).eq('id', id);
+    const { data, error } = await supabase.from('mensagens').update({ categoria, titulo, tags, conteudo, updated_at: new Date().toISOString() }).eq('id', id).select().single();
     if (error) fail('Não foi possível salvar a mensagem', error);
+    return data;
   } else {
-    const { error } = await supabase.from('mensagens').insert({ acesso_id: acessoId, categoria, titulo, tags, conteudo });
+    const { data, error } = await supabase.from('mensagens').insert({ acesso_id: acessoId, categoria, titulo, tags, conteudo }).select().single();
     if (error) fail('Não foi possível criar a mensagem', error);
+    return data;
   }
 }
 

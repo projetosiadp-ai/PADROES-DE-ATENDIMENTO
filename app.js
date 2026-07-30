@@ -91,7 +91,11 @@ class App {
     this._reg = {};
     this._regN = 0;
     this.searchEl = null;
-    this.state = {
+    this.state = this.initialState();
+  }
+
+  initialState() {
+    return {
       loading: true,
       loadError: '',
       darkMode: false,
@@ -191,7 +195,8 @@ class App {
 
     api.onAuthChange(async (session) => {
       if (!session) {
-        this.setState({ currentUser: null, profileId: null, loading: false, appView: 'dashboard', adminTab: 'mensagens' });
+        const { darkMode, density } = this.state;
+        this.setState({ ...this.initialState(), darkMode, density, loading: false });
         return;
       }
       await this.refreshAppData(session);
@@ -262,6 +267,8 @@ class App {
       navy: '#0F2C6B', cyan: '#1BA7DC',
       pageBg: dark ? '#091B2E' : '#A9DEEC',
       cardBg: dark ? 'rgba(15,44,107,0.75)' : 'rgba(255,255,255,0.82)',
+      modalSolidBg: dark ? '#12203F' : '#FFFFFF',
+      logoChipBg: dark ? 'rgba(255,255,255,0.92)' : 'transparent',
       inputBg: dark ? '#0A2847' : '#FFFFFF',
       text: dark ? '#E7ECF3' : '#0D1B38',
       textSecondary: dark ? '#8B98AC' : '#4A5B75',
@@ -280,6 +287,13 @@ class App {
     let hash = 0;
     for (let i = 0; i < nome.length; i++) hash = (hash * 31 + nome.charCodeAt(i)) >>> 0;
     return palette[hash % palette.length];
+  }
+
+  avatarSquare(letter, color, size) {
+    const s = size || 26;
+    const radius = s <= 30 ? '9px' : '11px';
+    const fontSize = s <= 30 ? '12px' : '14px';
+    return `<div style="width:${s}px; height:${s}px; border-radius:${radius}; background:linear-gradient(135deg, ${color}2E, ${color}16); color:${color}; font-weight:800; font-size:${fontSize}; display:flex; align-items:center; justify-content:center; flex-shrink:0; border:1px solid ${color}40; box-shadow:0 2px 6px -3px ${color}66;">${esc(letter)}</div>`;
   }
 
   showToast(msg, type) {
@@ -383,11 +397,12 @@ class App {
       return b.frequencia - a.frequencia;
     });
 
-    const mostUsed = [...acessoMsgs].sort((a, b) => b.frequencia - a.frequencia).slice(0, 5)
+    const acessoMsgsInCategory = acessoMsgs.filter(m => !st.categoryFilter || m.categoria === st.categoryFilter);
+    const mostUsed = [...acessoMsgsInCategory].sort((a, b) => b.frequencia - a.frequencia).slice(0, 5)
       .map(m => ({ titulo: m.titulo, onCopy: () => copyMessage(m), copyLabel: st.copiedId === m.id ? '✓' : 'Copiar' }));
-    const recentList = st.recentIds.map(id => acessoMsgs.find(m => m.id === id)).filter(Boolean)
+    const recentList = st.recentIds.map(id => acessoMsgsInCategory.find(m => m.id === id)).filter(Boolean)
       .map(m => ({ titulo: m.titulo, onCopy: () => copyMessage(m), copyLabel: st.copiedId === m.id ? '✓' : 'Copiar' }));
-    const favList = st.favoriteIds.map(id => acessoMsgs.find(m => m.id === id)).filter(Boolean)
+    const favList = st.favoriteIds.map(id => acessoMsgsInCategory.find(m => m.id === id)).filter(Boolean)
       .map(m => ({ titulo: m.titulo, onCopy: () => copyMessage(m), copyLabel: st.copiedId === m.id ? '✓' : 'Copiar' }));
 
     const categoriaChips = acessoCats.map(c => ({
@@ -453,7 +468,7 @@ class App {
 
       currentUser: { nome: profile.nome, iniciais: profile.nome.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(), perfilLabel: isSuperAdmin ? 'Administrador' : (isAdmin ? 'Admin local' : 'Usuário') },
       userMenuOpen: !!st.userMenuOpen, toggleUserMenu: () => this.setState({ userMenuOpen: !st.userMenuOpen }),
-      logout: () => api.signOut(),
+      logout: () => this.logout(),
 
       activeAcesso, activeAcessoId: activeAcesso.id,
       showAcessoSelector: userAcessoLinks.length > 1,
@@ -535,6 +550,15 @@ class App {
     }
   }
 
+  async logout() {
+    this.setState({ userMenuOpen: false });
+    try {
+      await api.signOut();
+    } catch (e) {
+      this.showToast('Não foi possível sair: ' + e.message, 'error');
+    }
+  }
+
   openCreateMsg() {
     const cats = this.state.categorias.filter(c => c.acesso_id === this.state.activeAcessoId);
     this.setState({ showMsgModal: true, editingMsgId: null, msgForm: { categoria: cats[0] ? cats[0].nome : '', titulo: '', tagInput: '', tags: [], conteudo: '' } });
@@ -550,11 +574,19 @@ class App {
   async saveMsg() {
     const f = this.state.msgForm;
     if (!f.titulo.trim() || !f.conteudo.trim()) { this.showToast('Preencha título e conteúdo.', 'error'); return; }
+    const wasCreate = !this.state.editingMsgId;
     try {
-      await api.saveMensagem({ id: this.state.editingMsgId, acessoId: this.state.activeAcessoId, categoria: f.categoria, titulo: f.titulo, tags: f.tags, conteudo: f.conteudo });
+      const saved = await api.saveMensagem({ id: this.state.editingMsgId, acessoId: this.state.activeAcessoId, categoria: f.categoria, titulo: f.titulo, tags: f.tags, conteudo: f.conteudo });
       this.setState({ showMsgModal: false });
       await this.refreshAppData(this.state.currentUser);
-      this.showToast('Mensagem salva com sucesso!', 'success');
+      if (wasCreate && saved) {
+        navigator.clipboard && navigator.clipboard.writeText(saved.conteudo).catch(() => {});
+        this.setState({ appView: 'dashboard', copiedId: saved.id });
+        setTimeout(() => this.setState({ copiedId: null }), 1400);
+        this.showToast('Mensagem criada e copiada!', 'success');
+      } else {
+        this.showToast('Mensagem salva com sucesso!', 'success');
+      }
     } catch (e) { this.showToast(e.message, 'error'); }
   }
   async deleteMsg(id) {
@@ -609,7 +641,7 @@ class App {
       <div style="min-height:100vh; background:${v.theme.pageBg};">
         <div style="padding:14px 24px; border-bottom:1px solid ${v.theme.border}; background:${v.theme.cardBg};">
           <div style="max-width:1400px; margin:0 auto; display:flex; align-items:center; gap:20px;">
-            <img src="assets/dentalplus-logo.png" alt="DentalPlus" style="height:26px; width:auto; opacity:.5;" />
+            <img src="assets/dentalplus-logo.png" alt="DentalPlus" style="height:26px; width:auto; opacity:.5; background:${v.theme.logoChipBg}; border-radius:6px; padding:${v.theme.logoChipBg !== 'transparent' ? '4px 8px' : '0'};" />
             ${skel('1px', '26px')}
             ${skel('220px', '18px')}
             ${skel('320px', '38px', 'margin-left:auto; border-radius:12px;')}
@@ -634,7 +666,7 @@ class App {
       <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:${t.pageBg}; padding:24px;">
         <div style="width:100%; max-width:400px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:16px; padding:40px 36px; box-shadow:0 20px 50px -20px rgba(11,45,107,0.25);">
           <div style="display:flex; justify-content:center; margin-bottom:28px;">
-            <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="309" height="52" style="height:52px; width:auto;" />
+            <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="309" height="52" style="height:52px; width:auto; background:${t.logoChipBg}; border-radius:8px; padding:${t.logoChipBg !== 'transparent' ? '8px 14px' : '0'};" />
           </div>
           <div style="text-align:center; margin-bottom:28px;">
             <div style="font-size:20px; font-weight:800; color:${t.text};">Padrões de atendimento</div>
@@ -673,7 +705,7 @@ class App {
     <div style="position:sticky; top:0; z-index:40; background:${t.cardBg}; border-bottom:1px solid ${t.border}; padding:14px 24px;">
       <div style="display:flex; align-items:center; gap:20px; max-width:1400px; margin:0 auto; flex-wrap:wrap;">
         <div role="button" tabindex="0" style="display:flex; align-items:center; gap:12px; cursor:pointer; border-radius:8px;" data-click="${H(v.goDashboard)}">
-          <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="140" height="24" style="height:24px; width:auto;" />
+          <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="140" height="24" style="height:24px; width:auto; background:${t.logoChipBg}; border-radius:6px; padding:${t.logoChipBg !== 'transparent' ? '4px 8px' : '0'};" />
           <div style="width:1px; height:26px; background:${t.border};"></div>
           <div style="font-size:15px; font-weight:800; color:${t.text}; line-height:1.2;">Padrões de atendimento</div>
         </div>
@@ -732,7 +764,7 @@ class App {
       <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" data-keydown="${H(m.onCardKeyDown)}" role="button" tabindex="0" aria-label="Copiar mensagem" title="Clique para copiar" class="dp-card" style="background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${m.shadow === 'none' ? t.shadowMd : m.shadow}; cursor:pointer; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); break-inside:avoid; margin-bottom:${v.cardGap}px;">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
           <div style="display:flex; align-items:center; gap:8px;">
-            <div style="width:26px; height:26px; border-radius:${t.radiusSm}; background:${m.catColor}22; color:${m.catColor}; font-weight:800; font-size:12px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">${esc(m.catInitial)}</div>
+            ${this.avatarSquare(m.catInitial, m.catColor, 26)}
             <div style="font-size:11px; font-weight:700; color:${t.textSecondary};">${esc(m.categoria)}</div>
           </div>
           <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; line-height:1; display:flex; transition:transform .15s ease;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'">${starIcon(m.isFav)}</button>
@@ -850,7 +882,7 @@ class App {
           ${v.acessoRows.map(a => `
             <div data-key="${esc(a.id)}" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:12px; padding:14px 18px;">
               <div style="display:flex; align-items:center; gap:12px;">
-                <div style="width:36px; height:36px; border-radius:10px; background:${a.cor}; color:#fff; font-weight:800; display:flex; align-items:center; justify-content:center; font-size:14px;">${esc(a.initial)}</div>
+                ${this.avatarSquare(a.initial, a.cor, 36)}
                 <div>
                   <div style="font-weight:800; font-size:14px;">${esc(a.nome)}</div>
                   <div style="font-size:12px; color:${t.textSecondary};">${esc(a.statsLabel)}</div>
@@ -888,7 +920,7 @@ class App {
     if (v.showMsgModal) {
       out += `
       <div role="presentation" data-click="${H(v.closeMsgModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
-        <div role="dialog" aria-modal="true" aria-label="${esc(v.msgModalTitle)}" data-click="${stay}" style="width:100%; max-width:520px; background:${t.cardBg}; border-radius:16px; padding:28px; animation:dp-modal-in .18s ease-out;">
+        <div role="dialog" aria-modal="true" aria-label="${esc(v.msgModalTitle)}" data-click="${stay}" style="width:100%; max-width:520px; background:${t.modalSolidBg}; border-radius:16px; padding:28px; animation:dp-modal-in .18s ease-out;">
           <div style="font-size:18px; font-weight:800; margin-bottom:18px;">${esc(v.msgModalTitle)}</div>
           <div style="display:flex; flex-direction:column; gap:14px;">
             <div>
