@@ -117,7 +117,8 @@ class App {
       showCatModal: false, editingCatId: null, catForm: { nome: '' },
       showAcessoModal: false, acessoForm: { nome: '', descricao: '', cor: '#1BA7DC' },
       showUsersModal: false, usersModalAcessoId: null,
-      acessoUsers: [], acessoUsersLoading: false, resetPasswordResult: null,
+      acessoUsers: [], allProfiles: [], addUserSelectedId: '',
+      acessoUsersLoading: false, resetPasswordResult: null,
       acessos: [],
       acessoMembros: [],
       categorias: [],
@@ -529,10 +530,17 @@ class App {
       acessoUsersLoading: st.acessoUsersLoading,
       usersModalRows: st.acessoUsers.map(u => ({
         userId: u.userId, nome: u.nome, email: u.email,
+        isAdminLocal: u.isAdminLocal,
         roleLabel: u.isAdminLocal ? 'Admin local' : 'Usuário',
         onResetPassword: () => this.requestResetPassword(u),
+        onToggleAdmin: () => this.toggleMemberAdminLocal(u.userId, !u.isAdminLocal),
+        onUnlink: () => this.requestUnlinkUser(u),
         justReset: st.resetPasswordResult && st.resetPasswordResult.userId === u.userId ? st.resetPasswordResult.tempPassword : null
       })),
+      addUserOptions: st.allProfiles.filter(p => !st.acessoUsers.some(u => u.userId === p.id)),
+      addUserSelectedId: st.addUserSelectedId,
+      onAddUserSelectChange: (e) => this.setState({ addUserSelectedId: e.target.value }),
+      addUserToAcesso: () => this.addUserToAcesso(),
       closeUsersModal: () => this.setState({ showUsersModal: false, resetPasswordResult: null }),
 
       showMsgModal: st.showMsgModal, msgModalTitle: st.editingMsgId ? 'Editar mensagem' : 'Nova mensagem',
@@ -767,14 +775,49 @@ class App {
     } catch (e) { this.showToast(e.message, 'error'); }
   }
   async openUsersModal(acessoId) {
-    this.setState({ showUsersModal: true, usersModalAcessoId: acessoId, acessoUsersLoading: true, acessoUsers: [], resetPasswordResult: null });
+    this.setState({ showUsersModal: true, usersModalAcessoId: acessoId, acessoUsersLoading: true, acessoUsers: [], allProfiles: [], addUserSelectedId: '', resetPasswordResult: null });
+    await this.reloadUsersModal(acessoId);
+  }
+  async reloadUsersModal(acessoId) {
     try {
-      const users = await api.listAcessoUsers(acessoId);
-      this.setState({ acessoUsers: users, acessoUsersLoading: false });
+      const [users, allProfiles] = await Promise.all([api.listAcessoUsers(acessoId), api.listAllProfiles()]);
+      this.setState({ acessoUsers: users, allProfiles, acessoUsersLoading: false });
     } catch (e) {
       this.setState({ acessoUsersLoading: false });
       this.showToast(e.message, 'error');
     }
+  }
+  async addUserToAcesso() {
+    const userId = this.state.addUserSelectedId;
+    const acessoId = this.state.usersModalAcessoId;
+    if (!userId) { this.showToast('Selecione um usuário para vincular.', 'error'); return; }
+    try {
+      await api.toggleUserLink(userId, acessoId, false);
+      this.setState({ addUserSelectedId: '' });
+      await this.reloadUsersModal(acessoId);
+      await this.refreshAppData(this.state.currentUser);
+      this.showToast('Usuário vinculado a este acesso.', 'success');
+    } catch (e) { this.showToast(e.message, 'error'); }
+  }
+  requestUnlinkUser(user) {
+    this.requestDelete('Remover vínculo', `Remover ${user.nome} deste Acesso? Ele(a) deixará de ver as mensagens e categorias daqui.`, () => this.unlinkUser(user.userId));
+  }
+  async unlinkUser(userId) {
+    const acessoId = this.state.usersModalAcessoId;
+    try {
+      await api.toggleUserLink(userId, acessoId, true);
+      await this.reloadUsersModal(acessoId);
+      await this.refreshAppData(this.state.currentUser);
+      this.showToast('Usuário removido deste acesso.', 'success');
+    } catch (e) { this.showToast(e.message, 'error'); }
+  }
+  async toggleMemberAdminLocal(userId, value) {
+    const acessoId = this.state.usersModalAcessoId;
+    try {
+      await api.toggleUserAdminLocal(userId, acessoId, value);
+      await this.reloadUsersModal(acessoId);
+      this.showToast(value ? 'Usuário agora é admin deste acesso.' : 'Permissão de admin removida.', 'success');
+    } catch (e) { this.showToast(e.message, 'error'); }
   }
   requestResetPassword(user) {
     this.requestDelete('Redefinir senha', `Gerar uma nova senha temporária para ${user.nome} (${user.email})? A senha atual dele(a) deixará de funcionar.`, () => this.resetUserPassword(user.userId));
@@ -1192,25 +1235,40 @@ class App {
           <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:16px;">${esc(v.usersModalAcessoNome)}</div>
           ${v.acessoUsersLoading
             ? `<div style="font-size:13px; color:${t.textSecondary};">Carregando…</div>`
-            : (v.usersModalRows.length === 0
-              ? `<div style="font-size:13px; color:${t.textSecondary};">Nenhum usuário vinculado a este acesso ainda.</div>`
-              : `<div style="display:flex; flex-direction:column; gap:8px;">
-                  ${v.usersModalRows.map(u => `
-                    <div data-key="${esc(u.userId)}" style="background:${t.pageBg}; border:1px solid ${t.border}; border-radius:${t.radiusSm}; padding:12px 14px;">
-                      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-                        <div>
-                          <div style="font-weight:700; font-size:14px;">${esc(u.nome)}</div>
-                          <div style="font-size:12px; color:${t.textSecondary};">${esc(u.email)} · ${esc(u.roleLabel)}</div>
+            : `
+              ${v.usersModalRows.length === 0
+                ? `<div style="font-size:13px; color:${t.textSecondary}; margin-bottom:16px;">Nenhum usuário vinculado a este acesso ainda.</div>`
+                : `<div style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;">
+                    ${v.usersModalRows.map(u => `
+                      <div data-key="${esc(u.userId)}" style="background:${t.pageBg}; border:1px solid ${t.border}; border-radius:${t.radiusSm}; padding:12px 14px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+                          <div>
+                            <div style="font-weight:700; font-size:14px;">${esc(u.nome)}</div>
+                            <div style="font-size:12px; color:${t.textSecondary};">${esc(u.email)} · ${esc(u.roleLabel)}</div>
+                          </div>
+                          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                            <button data-click="${H(u.onToggleAdmin)}" style="border:1px solid ${t.border}; background:${u.isAdminLocal ? t.navy : 'transparent'}; color:${u.isAdminLocal ? '#fff' : t.text}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer;">${u.isAdminLocal ? 'Remover admin' : 'Tornar admin'}</button>
+                            <button data-click="${H(u.onResetPassword)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer;">Redefinir senha</button>
+                            <button data-click="${H(u.onUnlink)}" style="border:none; background:#FEE2E2; color:#B91C1C; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer;">Remover</button>
+                          </div>
                         </div>
-                        <button data-click="${H(u.onResetPassword)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer; flex-shrink:0;">Gerar senha temporária</button>
-                      </div>
-                      ${u.justReset ? `
-                        <div style="margin-top:10px; padding:10px 12px; background:#DCFCE7; border-radius:8px;">
-                          <div style="font-size:11px; font-weight:800; color:#166534; text-transform:uppercase; margin-bottom:4px;">Nova senha temporária (copie agora, só aparece uma vez)</div>
-                          <div style="font-family:monospace; font-size:14px; font-weight:700; color:#14532D; user-select:all;">${esc(u.justReset)}</div>
-                        </div>` : ''}
-                    </div>`).join('')}
-                </div>`)}
+                        ${u.justReset ? `
+                          <div style="margin-top:10px; padding:10px 12px; background:#DCFCE7; border-radius:8px;">
+                            <div style="font-size:11px; font-weight:800; color:#166534; text-transform:uppercase; margin-bottom:4px;">Nova senha temporária (copie agora, só aparece uma vez)</div>
+                            <div style="font-family:monospace; font-size:14px; font-weight:700; color:#14532D; user-select:all;">${esc(u.justReset)}</div>
+                          </div>` : ''}
+                      </div>`).join('')}
+                  </div>`}
+              <div style="border-top:1px solid ${t.border}; padding-top:14px;">
+                <div style="font-size:12px; font-weight:700; color:${t.textSecondary}; margin-bottom:8px;">Vincular usuário a este acesso</div>
+                <div style="display:flex; gap:8px;">
+                  <select data-change="${H(v.onAddUserSelectChange)}" style="flex:1; padding:9px 10px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;">
+                    <option value="">Selecione um usuário…</option>
+                    ${v.addUserOptions.map(p => `<option value="${esc(p.id)}" ${p.id === v.addUserSelectedId ? 'selected' : ''}>${esc(p.nome)} (${esc(p.email)})</option>`).join('')}
+                  </select>
+                  <button data-click="${H(v.addUserToAcesso)}" style="border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; padding:0 16px; border-radius:8px; cursor:pointer;">Vincular</button>
+                </div>
+              </div>`}
           <div style="display:flex; justify-content:flex-end; margin-top:20px;">
             <button data-click="${H(v.closeUsersModal)}" style="padding:10px 18px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Concluir</button>
           </div>

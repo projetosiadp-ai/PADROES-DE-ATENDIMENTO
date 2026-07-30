@@ -151,6 +151,12 @@ export async function toggleUserAdminLocal(userId, acessoId, value) {
   if (error) fail('Não foi possível atualizar o admin local', error);
 }
 
+export async function listAllProfiles() {
+  const { data, error } = await supabase.from('profiles').select('id, nome, email').order('nome');
+  if (error) fail('Não foi possível carregar os usuários', error);
+  return data;
+}
+
 export async function listAcessoUsers(acessoId) {
   const { data: membros, error: mErr } = await supabase.from('acesso_membros').select('user_id, is_admin_local').eq('acesso_id', acessoId);
   if (mErr) fail('Não foi possível carregar os usuários do acesso', mErr);
