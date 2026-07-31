@@ -91,28 +91,6 @@ create table public.recentes (
   primary key (user_id, mensagem_id)
 );
 
--- ---------- incrementar frequência (atômico, valida acesso) ----------
-create function public.increment_frequencia(msg_id uuid)
-returns void
-language plpgsql
-security definer set search_path = public
-as $$
-declare
-  v_acesso_id uuid;
-begin
-  select acesso_id into v_acesso_id from public.mensagens where id = msg_id;
-  if v_acesso_id is null then
-    raise exception 'mensagem não encontrada';
-  end if;
-  if not exists (
-    select 1 from public.acesso_membros where acesso_id = v_acesso_id and user_id = auth.uid()
-  ) then
-    raise exception 'sem acesso a esta mensagem';
-  end if;
-  update public.mensagens set frequencia = frequencia + 1 where id = msg_id;
-end;
-$$;
-
 -- ---------- helper: sou superadmin? ----------
 -- SECURITY DEFINER + dono da tabela = bypassa RLS internamente. Isso é essencial:
 -- uma policy da própria tabela "profiles" NUNCA pode fazer um subselect cru em
@@ -126,6 +104,29 @@ as $$
   select exists (select 1 from public.profiles where id = auth.uid() and role = 'superadmin');
 $$;
 
+-- ---------- helper: posso USAR este acesso? (ler mensagens, favoritar, etc.) ----------
+-- Fonte única da verdade da regra "membro do Acesso OU superadmin". Toda policy e
+-- função que depende dessa regra chama esta função em vez de repetir o `exists` em
+-- acesso_membros.
+--
+-- Por que isso importa: antes, a leitura de `mensagens` dizia "membro OU superadmin"
+-- enquanto o `with check` de favoritos/recentes e o guard de increment_frequencia
+-- diziam só "membro". Como o superadmin enxerga os Acessos aos quais não tem vínculo
+-- em acesso_membros, favoritar/copiar uma mensagem desses Acessos estourava
+-- "new row violates row-level security policy". Com a regra num lugar só, leitura e
+-- escrita não podem mais divergir sem alguém perceber.
+create function public.is_acesso_member(p_acesso_id uuid)
+returns boolean
+language sql
+security definer set search_path = public
+stable
+as $$
+  select public.is_superadmin() or exists (
+    select 1 from public.acesso_membros
+    where acesso_id = p_acesso_id and user_id = auth.uid()
+  );
+$$;
+
 -- ---------- helper: sou admin (local ou superadmin) deste acesso? ----------
 create function public.is_acesso_admin(p_acesso_id uuid)
 returns boolean
@@ -137,6 +138,26 @@ as $$
     select 1 from public.acesso_membros
     where acesso_id = p_acesso_id and user_id = auth.uid() and is_admin_local = true
   );
+$$;
+
+-- ---------- incrementar frequência (atômico, valida acesso) ----------
+create function public.increment_frequencia(msg_id uuid)
+returns void
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_acesso_id uuid;
+begin
+  select acesso_id into v_acesso_id from public.mensagens where id = msg_id;
+  if v_acesso_id is null then
+    raise exception 'mensagem não encontrada';
+  end if;
+  if not public.is_acesso_member(v_acesso_id) then
+    raise exception 'sem acesso a esta mensagem';
+  end if;
+  update public.mensagens set frequencia = frequencia + 1 where id = msg_id;
+end;
 $$;
 
 -- ---------- solicitacoes_mensagem (staging para o fluxo de aprovação) ----------
@@ -257,10 +278,7 @@ create policy "profiles_update_superadmin" on public.profiles
   for update using (public.is_superadmin());
 
 create policy "acessos_select_members_or_superadmin" on public.acessos
-  for select using (
-    exists (select 1 from public.acesso_membros am where am.acesso_id = acessos.id and am.user_id = auth.uid())
-    or public.is_superadmin()
-  );
+  for select using (public.is_acesso_member(acessos.id));
 create policy "acessos_write_superadmin" on public.acessos
   for all using (public.is_superadmin())
   with check (public.is_superadmin());
@@ -275,36 +293,30 @@ create policy "acesso_membros_write_superadmin" on public.acesso_membros
   with check (public.is_superadmin());
 
 create policy "categorias_select_members" on public.categorias
-  for select using (
-    exists (select 1 from public.acesso_membros am where am.acesso_id = categorias.acesso_id and am.user_id = auth.uid())
-    or public.is_superadmin()
-  );
+  for select using (public.is_acesso_member(categorias.acesso_id));
 create policy "categorias_write_admins" on public.categorias
   for all using (public.is_acesso_admin(acesso_id))
   with check (public.is_acesso_admin(acesso_id));
 
 create policy "mensagens_select_members" on public.mensagens
-  for select using (
-    exists (select 1 from public.acesso_membros am where am.acesso_id = mensagens.acesso_id and am.user_id = auth.uid())
-    or public.is_superadmin()
-  );
+  for select using (public.is_acesso_member(mensagens.acesso_id));
 create policy "mensagens_write_admins" on public.mensagens
   for all using (public.is_acesso_admin(acesso_id))
   with check (public.is_acesso_admin(acesso_id));
 
--- with check valida também que a mensagem referenciada pertence a um acesso do
--- qual o usuário é membro — sem isso, dava para inserir um favorito/recente
--- apontando para o UUID de uma mensagem de outro acesso (não vaza conteúdo,
--- pois a leitura continua bloqueada pelo RLS de "mensagens", mas é uma
--- referência indevida que não deveria ser permitida).
+-- with check valida também que a mensagem referenciada é de um Acesso que o usuário
+-- pode usar — sem isso, dava para inserir um favorito/recente apontando para o UUID
+-- de uma mensagem de outro acesso (não vaza conteúdo, pois a leitura continua
+-- bloqueada pelo RLS de "mensagens", mas é uma referência indevida).
+-- A checagem usa is_acesso_member — exatamente a mesma regra do select de
+-- "mensagens" —, então nunca dá para ver uma mensagem e não conseguir favoritá-la.
 create policy "favoritos_own" on public.favoritos
   for all using (user_id = auth.uid())
   with check (
     user_id = auth.uid()
     and exists (
       select 1 from public.mensagens m
-      join public.acesso_membros am on am.acesso_id = m.acesso_id
-      where m.id = mensagem_id and am.user_id = auth.uid()
+      where m.id = favoritos.mensagem_id and public.is_acesso_member(m.acesso_id)
     )
   );
 
@@ -314,21 +326,17 @@ create policy "recentes_own" on public.recentes
     user_id = auth.uid()
     and exists (
       select 1 from public.mensagens m
-      join public.acesso_membros am on am.acesso_id = m.acesso_id
-      where m.id = mensagem_id and am.user_id = auth.uid()
+      where m.id = recentes.mensagem_id and public.is_acesso_member(m.acesso_id)
     )
   );
 
 create policy "solicitacoes_select_members_or_superadmin" on public.solicitacoes_mensagem
-  for select using (
-    exists (select 1 from public.acesso_membros am where am.acesso_id = solicitacoes_mensagem.acesso_id and am.user_id = auth.uid())
-    or public.is_superadmin()
-  );
+  for select using (public.is_acesso_member(solicitacoes_mensagem.acesso_id));
 
 create policy "solicitacoes_insert_members" on public.solicitacoes_mensagem
   for insert with check (
     solicitado_por = auth.uid()
-    and exists (select 1 from public.acesso_membros am where am.acesso_id = solicitacoes_mensagem.acesso_id and am.user_id = auth.uid())
+    and public.is_acesso_member(solicitacoes_mensagem.acesso_id)
   );
 
 -- Ninguém atualiza a tabela diretamente (mesmo superadmin) — só via as functions
