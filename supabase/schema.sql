@@ -170,14 +170,21 @@ $$;
 create table public.solicitacoes_mensagem (
   id uuid primary key default gen_random_uuid(),
   acesso_id uuid not null references public.acessos(id) on delete cascade,
-  mensagem_id uuid references public.mensagens(id) on delete cascade,
+  -- SET NULL (e não CASCADE): apagar a mensagem não pode apagar o registro de quem
+  -- pediu e quem aprovou. Com CASCADE, aprovar uma solicitação de EXCLUSÃO fazia o
+  -- próprio histórico sumir junto com a mensagem, silenciosamente.
+  -- Os snapshots *_anterior preservam o conteúdo do que foi excluído.
+  mensagem_id uuid references public.mensagens(id) on delete set null,
   tipo text not null check (tipo in ('criacao','edicao','exclusao')),
   status text not null default 'pendente' check (status in ('pendente','aprovada','rejeitada')),
 
   -- snapshot proposto (o que deveria valer se aprovado)
+  -- os limites espelham os de `mensagens`: se a validação só existisse lá, um
+  -- pedido fora do padrão só falharia na hora de APROVAR — ou seja, o erro cairia
+  -- no colo de quem revisa, e não de quem pediu, sem forma de resolver pela tela.
   categoria text,
-  titulo text,
-  conteudo text,
+  titulo text check (titulo is null or char_length(titulo) <= 100),
+  conteudo text check (conteudo is null or char_length(conteudo) <= 2000),
   tags text[],
 
   -- snapshot anterior (para exibir antes/depois em edição/exclusão)
@@ -192,8 +199,15 @@ create table public.solicitacoes_mensagem (
   revisado_em timestamptz,
   motivo_rejeicao text,
 
+  -- A regra de formato vale apenas ENQUANTO A SOLICITAÇÃO ESTÁ PENDENTE. Depois de
+  -- revisada, a linha vira registro histórico e legitimamente muda de forma:
+  --   - 'criacao' aprovada passa a apontar para a mensagem que acabou de ser criada
+  --   - 'exclusao' aprovada tem mensagem_id zerado pela FK quando a mensagem some
+  -- Sem o `status <> 'pendente'`, aprovar uma criação estourava
+  -- "violates check constraint solicitacoes_mensagem_tipo_mensagem_ck".
   constraint solicitacoes_mensagem_tipo_mensagem_ck check (
-    (tipo = 'criacao' and mensagem_id is null)
+    status <> 'pendente'
+    or (tipo = 'criacao' and mensagem_id is null)
     or (tipo in ('edicao','exclusao') and mensagem_id is not null)
   )
 );
@@ -202,38 +216,59 @@ create table public.solicitacoes_mensagem (
 -- Aplica o efeito em `mensagens` (insert/update/delete conforme o tipo) e marca
 -- o status da solicitação numa única transação — o cliente comum nunca precisa
 -- de permissão de escrita direta em `mensagens`.
+-- A ORDEM das operações é diferente por tipo, e isso é proposital:
+--   criacao  -> insere a mensagem primeiro, porque só depois existe o id para gravar
+--   edicao   -> atualiza a mensagem e marca a solicitação
+--   exclusao -> marca a solicitação ANTES de apagar. No instante do delete a FK zera
+--               mensagem_id, e uma linha ainda 'pendente' com mensagem_id nulo
+--               violaria solicitacoes_mensagem_tipo_mensagem_ck.
 create function public.aprovar_solicitacao(p_id uuid)
 returns void
 language plpgsql
 security definer set search_path = public
 as $$
 declare
-  v_sol record;
+  v_sol public.solicitacoes_mensagem;
+  v_nova_msg uuid;
 begin
   if not public.is_superadmin() then
     raise exception 'apenas superadmin pode aprovar solicitações';
   end if;
 
   select * into v_sol from public.solicitacoes_mensagem where id = p_id and status = 'pendente';
-  if v_sol is null then
+  if not found then
     raise exception 'solicitação não encontrada ou já revisada';
   end if;
 
   if v_sol.tipo = 'criacao' then
     insert into public.mensagens (acesso_id, categoria, titulo, conteudo, tags, created_by)
     values (v_sol.acesso_id, v_sol.categoria, v_sol.titulo, v_sol.conteudo, coalesce(v_sol.tags, '{}'), v_sol.solicitado_por)
-    returning id into v_sol.mensagem_id;
+    returning id into v_nova_msg;
+
+    update public.solicitacoes_mensagem
+      set status = 'aprovada', mensagem_id = v_nova_msg, revisado_por = auth.uid(), revisado_em = now()
+      where id = p_id;
+
   elsif v_sol.tipo = 'edicao' then
     update public.mensagens
-      set categoria = v_sol.categoria, titulo = v_sol.titulo, conteudo = v_sol.conteudo, tags = coalesce(v_sol.tags, '{}'), updated_at = now()
+      set categoria = v_sol.categoria, titulo = v_sol.titulo, conteudo = v_sol.conteudo,
+          tags = coalesce(v_sol.tags, '{}'), updated_at = now()
       where id = v_sol.mensagem_id;
+    if not found then
+      raise exception 'a mensagem desta solicitação não existe mais';
+    end if;
+
+    update public.solicitacoes_mensagem
+      set status = 'aprovada', revisado_por = auth.uid(), revisado_em = now()
+      where id = p_id;
+
   elsif v_sol.tipo = 'exclusao' then
+    update public.solicitacoes_mensagem
+      set status = 'aprovada', revisado_por = auth.uid(), revisado_em = now()
+      where id = p_id;
+
     delete from public.mensagens where id = v_sol.mensagem_id;
   end if;
-
-  update public.solicitacoes_mensagem
-    set status = 'aprovada', mensagem_id = v_sol.mensagem_id, revisado_por = auth.uid(), revisado_em = now()
-    where id = p_id;
 end;
 $$;
 
