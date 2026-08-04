@@ -313,6 +313,39 @@ class App {
     return `<div style="width:${s}px; height:${s}px; border-radius:${radius}; background:linear-gradient(135deg, ${color}2E, ${color}16); color:${color}; font-weight:800; font-size:${fontSize}; display:flex; align-items:center; justify-content:center; flex-shrink:0; border:1px solid ${color}40; box-shadow:0 2px 6px -3px ${color}66;">${esc(letter)}</div>`;
   }
 
+  // Ícone temático por palavra-chave no nome da categoria (texto livre, criado
+  // pelo usuário — sem tabela de mapeamento no banco). Sem correspondência,
+  // cai no ícone de etiqueta genérico em vez de deixar o avatar vazio.
+  categoryIcon(nome) {
+    const n = normalize(nome);
+    const has = (...words) => words.some(w => n.includes(w));
+    if (has('financeiro', 'pix', 'pagamento', 'cobranca', 'fatura', 'boleto', 'reembolso'))
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`;
+    if (has('comercial', 'venda', 'proposta', 'orcamento', 'pedido'))
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg>`;
+    if (has('relacionamento', 'atendimento', 'boas-vindas', 'boas vindas', 'cliente'))
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>`;
+    if (has('qualidade', 'avaliacao', 'pesquisa'))
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15 9 22 9.5 17 14.5 18.5 22 12 18 5.5 22 7 14.5 2 9.5 9 9 12 2"/></svg>`;
+    if (has('portal', 'sistema', 'acesso', 'login', 'senha'))
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="18" x2="12" y2="21"/></svg>`;
+    if (has('empresarial', 'institucional', 'corporativo'))
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>`;
+    if (has('agendamento', 'consulta', 'horario', 'marcacao'))
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
+    if (has('resolucao', 'problema', 'suporte', 'duvida'))
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>`;
+    if (has('protocolo', 'documento', 'contrato', 'pendencia', 'encerramento'))
+      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>`;
+    return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 12.6 12.6 20.6a2 2 0 0 1-2.8 0l-6.4-6.4a2 2 0 0 1 0-2.8L11.4 3.4A2 2 0 0 1 12.8 3H19a2 2 0 0 1 2 2v6.2a2 2 0 0 1-.4 1.4z"/><circle cx="16" cy="8" r="1"/></svg>`;
+  }
+
+  avatarIcon(iconSvg, color, size) {
+    const s = size || 26;
+    const radius = s <= 30 ? '9px' : '11px';
+    return `<div style="width:${s}px; height:${s}px; border-radius:${radius}; background:linear-gradient(135deg, ${color}2E, ${color}16); color:${color}; display:flex; align-items:center; justify-content:center; flex-shrink:0; border:1px solid ${color}40; box-shadow:0 2px 6px -3px ${color}66;">${iconSvg}</div>`;
+  }
+
   showToast(msg, type) {
     clearTimeout(this._toastTimer);
     this.setState({ toast: { show: true, msg, type: type || 'success', bg: type === 'error' ? '#DC2626' : '#0F2C6B' } });
@@ -390,7 +423,7 @@ class App {
       const isLong = m.conteudo.length > threshold;
       const displayContent = isLong && !expanded ? m.conteudo.slice(0, threshold).trim() + '…' : m.conteudo;
       return {
-        id: m.id, categoria: m.categoria, catInitial: m.categoria.charAt(0).toUpperCase(),
+        id: m.id, categoria: m.categoria,
         catColor: this.categoryColor(m.categoria),
         titleSegments: this.titleSegments(m.titulo, st.searchQuery),
         displayContent, showToggle: isLong, toggleLabel: expanded ? 'ver menos' : 'ver mais',
@@ -972,7 +1005,7 @@ class App {
       <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" data-keydown="${H(m.onCardKeyDown)}" role="button" tabindex="0" aria-label="Copiar mensagem" title="Clique para copiar" class="dp-card" style="background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${m.shadow === 'none' ? t.shadowMd : m.shadow}; cursor:pointer; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); break-inside:avoid; margin-bottom:${v.cardGap}px;">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
           <div style="display:flex; align-items:center; gap:8px;">
-            ${this.avatarSquare(m.catInitial, m.catColor, 26)}
+            ${this.avatarIcon(this.categoryIcon(m.categoria), m.catColor, 26)}
             <div style="font-size:11px; font-weight:700; color:${t.textSecondary};">${esc(m.categoria)}</div>
           </div>
           <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; line-height:1; display:flex; transition:transform .15s ease;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'">${starIcon(m.isFav)}</button>
@@ -1088,20 +1121,20 @@ class App {
           <div style="font-size:20px; font-weight:800;">Acessos</div>
           <button data-click="${H(v.openCreateAcesso)}" style="border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:8px; cursor:pointer;">+ Novo Acesso</button>
         </div>
-        <div style="display:flex; flex-direction:column; gap:10px;">
+        <div style="display:flex; flex-direction:column; gap:12px;">
           ${v.acessoRows.map(a => `
-            <div data-key="${esc(a.id)}" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:12px; padding:14px 18px;">
-              <div style="display:flex; align-items:center; gap:12px;">
-                ${this.avatarSquare(a.initial, a.cor, 36)}
+            <div data-key="${esc(a.id)}" class="dp-row-card" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:16px; padding:18px 20px; box-shadow:${t.shadowSm};">
+              <div style="display:flex; align-items:center; gap:14px;">
+                ${this.avatarSquare(a.initial, a.cor, 40)}
                 <div>
-                  <div style="font-weight:800; font-size:14px;">${esc(a.nome)}</div>
-                  <div style="font-size:12px; color:${t.textSecondary};">${esc(a.statsLabel)}</div>
+                  <div style="font-weight:800; font-size:15px;">${esc(a.nome)}</div>
+                  <div style="font-size:12px; color:${t.textSecondary}; margin-top:2px;">${esc(a.statsLabel)}</div>
                 </div>
               </div>
               <div style="display:flex; align-items:center; gap:8px;">
-                <div style="font-size:11px; font-weight:800; padding:4px 10px; border-radius:999px; background:${a.statusBg}; color:${a.statusColor};">${esc(a.statusLabel)}</div>
-                <button data-click="${H(a.onUsers)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer;">Usuários</button>
-                <button data-click="${H(a.onToggleStatus)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer;">${esc(a.toggleLabel)}</button>
+                <div style="font-size:11px; font-weight:800; padding:5px 12px; border-radius:999px; background:${a.statusBg}; color:${a.statusColor};">${esc(a.statusLabel)}</div>
+                <button data-click="${H(a.onUsers)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:7px 12px; border-radius:8px; cursor:pointer;">Usuários</button>
+                <button data-click="${H(a.onToggleStatus)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:7px 12px; border-radius:8px; cursor:pointer;">${esc(a.toggleLabel)}</button>
               </div>
             </div>`).join('')}
         </div>`;
@@ -1132,15 +1165,21 @@ class App {
         </div>`}`;
     }
 
+    const navIcon = (path) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">${path}</svg>`;
+    const iconMsgs = navIcon('<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/>');
+    const iconCats = navIcon('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>');
+    const iconAcessos = navIcon('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>');
+    const iconSolic = navIcon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 2 2 4-4"/>');
+
     return `
     <div data-key="view-admin" class="dp-admin-layout dp-view-enter" style="max-width:1300px; margin:0 auto; padding:24px; display:flex; gap:24px; align-items:flex-start;">
-      <div class="dp-admin-sidebar" role="tablist" aria-label="Seções do painel administrativo" style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:14px; padding:12px; position:sticky; top:96px;">
-        <div role="button" tabindex="0" data-click="${H(v.goDashboard)}" style="font-size:13px; font-weight:700; color:${t.textSecondary}; padding:10px 12px; cursor:pointer; border-radius:8px;">← Voltar ao painel</div>
-        <div style="height:1px; background:${t.border}; margin:8px 0;"></div>
-        <div role="tab" tabindex="0" aria-selected="${v.isAdminMsgs}" data-click="${H(v.setAdminTabMsgs)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:4px; background:${v.tabMsgsBg}; color:${v.tabMsgsColor};">Mensagens</div>
-        <div role="tab" tabindex="0" aria-selected="${v.isAdminCats}" data-click="${H(v.setAdminTabCats)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:4px; background:${v.tabCatsBg}; color:${v.tabCatsColor};">Categorias</div>
-        ${v.isSuperAdmin ? `<div role="tab" tabindex="0" aria-selected="${v.isAdminAcessos}" data-click="${H(v.setAdminTabAcessos)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:4px; background:${v.tabAcessosBg}; color:${v.tabAcessosColor};">Acessos</div>` : ''}
-        ${v.isSuperAdmin ? `<div role="tab" tabindex="0" aria-selected="${v.isAdminSolicitacoes}" data-click="${H(v.setAdminTabSolicitacoes)}" style="padding:10px 12px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:700; background:${v.tabSolicitacoesBg}; color:${v.tabSolicitacoesColor};">${esc(v.solicitacoesTabLabel)}</div>` : ''}
+      <div class="dp-admin-sidebar" role="tablist" aria-label="Seções do painel administrativo" style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:16px; padding:14px; position:sticky; top:96px;">
+        <div role="button" tabindex="0" data-click="${H(v.goDashboard)}" style="font-size:13px; font-weight:700; color:${t.textSecondary}; padding:11px 14px; cursor:pointer; border-radius:999px;">← Voltar ao painel</div>
+        <div style="height:1px; background:${t.border}; margin:10px 4px;"></div>
+        <div role="tab" tabindex="0" aria-selected="${v.isAdminMsgs}" data-click="${H(v.setAdminTabMsgs)}" style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:999px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:6px; background:${v.tabMsgsBg}; color:${v.tabMsgsColor};">${iconMsgs}Mensagens</div>
+        <div role="tab" tabindex="0" aria-selected="${v.isAdminCats}" data-click="${H(v.setAdminTabCats)}" style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:999px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:6px; background:${v.tabCatsBg}; color:${v.tabCatsColor};">${iconCats}Categorias</div>
+        ${v.isSuperAdmin ? `<div role="tab" tabindex="0" aria-selected="${v.isAdminAcessos}" data-click="${H(v.setAdminTabAcessos)}" style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:999px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:6px; background:${v.tabAcessosBg}; color:${v.tabAcessosColor};">${iconAcessos}Acessos</div>` : ''}
+        ${v.isSuperAdmin ? `<div role="tab" tabindex="0" aria-selected="${v.isAdminSolicitacoes}" data-click="${H(v.setAdminTabSolicitacoes)}" style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:999px; cursor:pointer; font-size:14px; font-weight:700; background:${v.tabSolicitacoesBg}; color:${v.tabSolicitacoesColor};">${iconSolic}${esc(v.solicitacoesTabLabel)}</div>` : ''}
       </div>
       <div style="flex:1; min-width:0;">
         <div style="font-size:12px; font-weight:700; color:${t.textSecondary}; margin-bottom:14px;">Operando em: <span style="color:${t.cyan};">${esc(v.activeAcesso.nome)}</span></div>

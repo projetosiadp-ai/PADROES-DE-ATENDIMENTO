@@ -37,6 +37,14 @@
     border-color: #1BA7DC55 !important;
   }
   .dp-card:active { transform: translateY(-1px); }
+  .dp-row-card {
+    transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+  }
+  .dp-row-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 28px -16px rgba(15,44,107,0.28);
+    border-color: #1BA7DC55 !important;
+  }
   .dp-skeleton {
     background: linear-gradient(90deg, rgba(148,163,184,0.15) 25%, rgba(148,163,184,0.3) 37%, rgba(148,163,184,0.15) 63%);
     background-size: 600px 100%;
@@ -49,7 +57,7 @@
   @keyframes dp-fade-in { from { opacity: 0; } to { opacity: 1; } }
   .dp-view-enter { animation: dp-fade-in .18s ease-out; }
   .dp-table-scroll { overflow-x: auto; }
-  .dp-admin-sidebar { width: 220px; flex-shrink: 0; }
+  .dp-admin-sidebar { width: 236px; flex-shrink: 0; }
 
   @media (max-width: 720px) {
     .dp-admin-layout { flex-direction: column !important; }
