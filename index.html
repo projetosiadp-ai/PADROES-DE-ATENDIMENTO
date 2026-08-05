@@ -6,11 +6,13 @@
 <title>Mensagens de Relacionamento — DentalPlus</title>
 <link rel="icon" href="assets/favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Nunito:wght@700;800;900&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: 'Nunito', sans-serif; }
-  ::selection { background: #1BA7DC55; }
+  body { margin: 0; font-family: 'Manrope', sans-serif; }
+  h1, h2, h3 { font-family: 'Sora', 'Manrope', sans-serif; }
+  ::selection { background: #0E93D855; }
   @keyframes dp-toast-in { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
   @keyframes dp-modal-in { from { transform: translateY(16px) scale(0.98); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
   @keyframes dp-shimmer { 0% { background-position: -300px 0; } 100% { background-position: 300px 0; } }
@@ -23,18 +25,18 @@
   input, textarea, select { transition: border-color .15s ease, box-shadow .15s ease; }
   input:focus, textarea:focus, select:focus {
     outline: none !important;
-    border-color: #1BA7DC !important;
-    box-shadow: 0 0 0 3px rgba(27,167,220,0.18);
+    border-color: #0E93D8 !important;
+    box-shadow: 0 0 0 3px rgba(14,147,216,0.18);
   }
   [role="button"] { transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
   [role="button"]:focus-visible, button:focus-visible, a:focus-visible {
-    outline: 2px solid #1BA7DC;
+    outline: 2px solid #0E93D8;
     outline-offset: 2px;
   }
   .dp-card:hover {
     transform: translateY(-3px);
-    box-shadow: 0 14px 28px -14px rgba(15,44,107,0.28);
-    border-color: #1BA7DC55 !important;
+    box-shadow: 0 14px 28px -14px rgba(17,31,63,0.22);
+    border-color: #0E93D855 !important;
   }
   .dp-card:active { transform: translateY(-1px); }
   .dp-row-card {
@@ -42,8 +44,8 @@
   }
   .dp-row-card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 14px 28px -16px rgba(15,44,107,0.28);
-    border-color: #1BA7DC55 !important;
+    box-shadow: 0 14px 28px -16px rgba(17,31,63,0.22);
+    border-color: #0E93D855 !important;
   }
   .dp-skeleton {
     background: linear-gradient(90deg, rgba(148,163,184,0.15) 25%, rgba(148,163,184,0.3) 37%, rgba(148,163,184,0.15) 63%);
@@ -63,6 +65,16 @@
     .dp-admin-layout { flex-direction: column !important; }
     .dp-admin-sidebar { width: 100% !important; position: static !important; top: auto !important; display: flex !important; gap: 6px; overflow-x: auto; }
     .dp-admin-sidebar > div { white-space: nowrap; margin-bottom: 0 !important; }
+
+    .dp-app-shell { grid-template-columns: 1fr !important; }
+    .dp-sidebar {
+      position: static !important; height: auto !important; width: 100% !important;
+      flex-direction: row !important; align-items: center; overflow-x: auto; overflow-y: hidden;
+      padding: 10px 12px !important; gap: 8px !important;
+    }
+    .dp-sidebar > div:first-child { padding: 2px 8px !important; flex-shrink: 0; }
+    .dp-sidebar > div:not(:first-child) { flex-shrink: 0; margin-bottom: 0 !important; }
+    .dp-sidebar > div[style*="font-size:10.5px"] { display: none; }
   }
 </style>
 </head>

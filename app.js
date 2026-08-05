@@ -106,11 +106,14 @@ class App {
       searchQuery: '',
       adminSearchQuery: '',
       categoryFilter: null,
-      expandedIds: {},
       copiedId: null,
+      librarySort: 'relevance',
+      libraryViewMode: 'grid',
+      showPreviewModal: false, previewingMsgId: null,
+      paletteOpen: false, paletteQuery: '', paletteIndex: 0,
       favoriteIds: [],       // mensagem_id[] for the current user
       recentIds: [],         // mensagem_id[] for the current user, most recent first
-      toast: { show: false, msg: '', type: 'success' },
+      toast: { show: false, msg: '', type: 'success', body: '' },
       confirm: { open: false, title: '', message: '', action: null },
       showMsgModal: false, editingMsgId: null,
       msgForm: { categoria: '', titulo: '', tagInput: '', tags: [], conteudo: '' },
@@ -218,12 +221,27 @@ class App {
     }
 
     this._keyHandler = (e) => {
+      const st = this.state;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        this.setState({ paletteOpen: !st.paletteOpen, paletteQuery: '', paletteIndex: 0 });
+        return;
+      }
+      if (st.paletteOpen) {
+        const rows = this.paletteList();
+        if (e.key === 'ArrowDown') { e.preventDefault(); this.setState(s => ({ paletteIndex: Math.min(rows.length - 1, s.paletteIndex + 1) })); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); this.setState(s => ({ paletteIndex: Math.max(0, s.paletteIndex - 1) })); }
+        else if (e.key === 'Enter') { e.preventDefault(); const m = rows[st.paletteIndex]; if (m) { this.copyFromPalette(m); } }
+        else if (e.key === 'Escape') { e.preventDefault(); this.setState({ paletteOpen: false }); }
+        return;
+      }
+      const typing = /INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || '');
+      if (e.key === '/' && !typing && st.currentUser) {
         e.preventDefault();
         if (this.searchEl) this.searchEl.focus();
       } else if (e.key === 'Escape') {
-        const st = this.state;
-        if (st.showMsgModal) this.setState({ showMsgModal: false });
+        if (st.showPreviewModal) this.setState({ showPreviewModal: false });
+        else if (st.showMsgModal) this.setState({ showMsgModal: false });
         else if (st.showCatModal) this.setState({ showCatModal: false });
         else if (st.showAcessoModal) this.setState({ showAcessoModal: false });
         else if (st.showUsersModal) this.setState({ showUsersModal: false });
@@ -276,26 +294,80 @@ class App {
     return titleSegmentsPure(titulo, query, `background:${this.theme().cyan}33; border-radius:3px; padding:0 2px;`);
   }
 
+  /* Shared by the message cards, the "Visão geral" panels and the command
+   * palette, all of which need to copy a message + record usage the same way. */
+  getActiveAcessoMsgs() {
+    const st = this.state;
+    if (!st.currentUser) return [];
+    const activeAcesso = st.acessos.find(a => a.id === st.activeAcessoId) || st.acessos[0];
+    if (!activeAcesso) return [];
+    return st.mensagens.filter(m => m.acesso_id === activeAcesso.id);
+  }
+  copyMessage(msg) {
+    const session = this.state.currentUser;
+    const profile = session.profile;
+    navigator.clipboard && navigator.clipboard.writeText(msg.conteudo).catch(() => {});
+    this.setState({ copiedId: msg.id });
+    setTimeout(() => this.setState({ copiedId: null }), 1400);
+    this.showToast(`"${msg.titulo}" copiada!`, 'success', msg.conteudo);
+    Promise.all([api.incrementFrequencia(msg.id), api.recordRecente(profile.id, msg.id)])
+      .then(() => this.refreshAppData(session))
+      .catch(e => this.showToast(e.message, 'error'));
+  }
+  paletteList() {
+    const q = this.state.paletteQuery.trim();
+    let list = this.getActiveAcessoMsgs();
+    if (q) list = list.filter(m => this.matchesSearch(m, q));
+    return [...list].sort((a, b) => b.frequencia - a.frequencia).slice(0, 8);
+  }
+  copyFromPalette(msg) {
+    this.copyMessage(msg);
+    this.setState({ paletteOpen: false });
+  }
+
   theme() {
     const dark = this.state.darkMode;
     return {
-      navy: '#0F2C6B', cyan: '#1BA7DC',
-      pageBg: dark ? '#091B2E' : '#A9DEEC',
-      cardBg: dark ? 'rgba(15,44,107,0.75)' : 'rgba(255,255,255,0.82)',
-      modalSolidBg: dark ? '#12203F' : '#FFFFFF',
-      chipBg: dark ? '#182A45' : '#F4F7FA',
-      chipBgHover: dark ? '#1E3352' : '#EBEFF3',
+      // Legacy aliases kept so every existing call site keeps working —
+      // only the underlying values change for the redesign.
+      navy: dark ? '#2B62D6' : '#16336E', cyan: dark ? '#4CC3FF' : '#0E93D8',
+      pageBg: dark ? '#080F22' : '#EEF2F9',
+      cardBg: dark ? '#101B38' : '#FFFFFF',
+      modalSolidBg: dark ? '#101B38' : '#FFFFFF',
+      chipBg: dark ? '#0C152E' : '#F1F5FB',
+      chipBgHover: dark ? '#16234a' : '#e4ebf6',
       logoGlow: dark ? 'filter: drop-shadow(0 0 2px rgba(255,255,255,0.85)) drop-shadow(0 0 5px rgba(255,255,255,0.45));' : '',
-      inputBg: dark ? '#0A2847' : '#FFFFFF',
-      text: dark ? '#E7ECF3' : '#0D1B38',
-      textSecondary: dark ? '#8B98AC' : '#4A5B75',
-      border: dark ? '#22304A' : '#B8DCE8',
-      radiusSm: '8px',
-      radiusLg: '16px',
-      shadowSm: dark ? '0 2px 6px -2px rgba(0,0,0,0.4)' : '0 2px 6px -2px rgba(15,44,107,0.12)',
-      shadowMd: dark ? '0 8px 20px -10px rgba(0,0,0,0.5)' : '0 8px 20px -10px rgba(15,44,107,0.18)',
-      shadowLg: dark ? '0 14px 32px -14px rgba(0,0,0,0.6)' : '0 14px 32px -14px rgba(15,44,107,0.28)',
-      glassEffect: 'backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);'
+      inputBg: dark ? '#0C152E' : '#F1F5FB',
+      text: dark ? '#E9EFFB' : '#111F3F',
+      textSecondary: dark ? '#A3B3D4' : '#54678C',
+      textTertiary: dark ? '#5F7199' : '#93A6C4',
+      border: dark ? '#213155' : '#DDE6F2',
+      border2: dark ? '#2C3F6B' : '#CBD9EA',
+      radiusSm: '12px',
+      radiusMd: '14px',
+      radiusLg: '18px',
+      radiusXl: '22px',
+      shadowSm: dark ? '0 1px 2px rgba(0,0,0,0.3)' : '0 1px 2px rgba(17,31,63,0.04)',
+      shadowMd: dark ? '0 1px 2px rgba(0,0,0,.3), 0 14px 36px -18px rgba(0,0,0,.6)' : '0 1px 2px rgba(17,31,63,.04), 0 12px 32px -16px rgba(17,31,63,.18)',
+      shadowLg: dark ? '0 14px 36px -18px rgba(0,0,0,0.6)' : '0 12px 32px -16px rgba(17,31,63,0.18)',
+      glassEffect: 'backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);',
+
+      // New tokens for the redesign.
+      panel: dark ? 'rgba(13,22,45,0.75)' : 'rgba(255,255,255,0.75)',
+      accent: dark ? '#4CC3FF' : '#0E93D8',
+      accentSoft: dark ? 'rgba(76,195,255,0.13)' : 'rgba(14,147,216,0.11)',
+      brand: dark ? '#2B62D6' : '#16336E',
+      brand2: dark ? '#3A74EA' : '#1E4290',
+      brandGradient: dark ? 'linear-gradient(135deg,#3A74EA,#39B5F5)' : 'linear-gradient(135deg,#1E4290,#0E93D8)',
+      glow: dark ? '0 8px 26px -8px rgba(57,181,245,0.35)' : '0 8px 24px -8px rgba(14,147,216,0.45)',
+      ok: dark ? '#34D399' : '#0E9F6E',
+      okSoft: dark ? 'rgba(52,211,153,0.13)' : 'rgba(16,185,129,0.13)',
+      danger: dark ? '#FF7B7B' : '#D64545',
+      dangerSoft: dark ? 'rgba(255,123,123,0.13)' : 'rgba(214,69,69,0.11)',
+      toastBg: dark ? '#E9EFFB' : '#111F3F',
+      toastInk: dark ? '#111F3F' : '#F2F7FD',
+      fontDisplay: "'Sora', 'Nunito', sans-serif",
+      fontBody: "'Manrope', sans-serif"
     };
   }
 
@@ -346,10 +418,11 @@ class App {
     return `<div style="width:${s}px; height:${s}px; border-radius:${radius}; background:linear-gradient(135deg, ${color}2E, ${color}16); color:${color}; display:flex; align-items:center; justify-content:center; flex-shrink:0; border:1px solid ${color}40; box-shadow:0 2px 6px -3px ${color}66;">${iconSvg}</div>`;
   }
 
-  showToast(msg, type) {
+  showToast(msg, type, body) {
     clearTimeout(this._toastTimer);
-    this.setState({ toast: { show: true, msg, type: type || 'success', bg: type === 'error' ? '#DC2626' : '#0F2C6B' } });
-    this._toastTimer = setTimeout(() => this.setState({ toast: { show: false, msg: '', type: 'success' } }), 3000);
+    const t = this.theme();
+    this.setState({ toast: { show: true, msg, type: type || 'success', body: body || '', bg: type === 'error' ? t.danger : t.toastBg, ink: type === 'error' ? '#fff' : t.toastInk } });
+    this._toastTimer = setTimeout(() => this.setState({ toast: { show: false, msg: '', type: 'success', body: '' } }), body ? 6000 : 3000);
   }
 
   /* ---------------- computed bindings ---------------- */
@@ -361,7 +434,8 @@ class App {
 
     if (st.loading) {
       return { isLogin: false, isApp: false, isLoading: true, theme, confirm: st.confirm, toast: st.toast,
-        showMsgModal: false, showCatModal: false, showAcessoModal: false, showUsersModal: false };
+        showMsgModal: false, showCatModal: false, showAcessoModal: false, showUsersModal: false,
+        showPreviewModal: false, paletteOpen: false, showSolicitacaoModal: false, showApprovalPopup: false };
     }
 
     if (!session) {
@@ -399,82 +473,95 @@ class App {
     const localAdminEntry = st.acessoMembros.find(m => m.acesso_id === activeAcesso.id);
     const isAdmin = isSuperAdmin || (localAdminEntry && localAdminEntry.is_admin_local);
 
-    const copyMessage = (msg) => {
-      navigator.clipboard && navigator.clipboard.writeText(msg.conteudo).catch(() => {});
-      this.setState({ copiedId: msg.id });
-      setTimeout(() => this.setState({ copiedId: null }), 1400);
-      this.showToast('Mensagem copiada!', 'success');
-      Promise.all([api.incrementFrequencia(msg.id), api.recordRecente(profile.id, msg.id)])
-        .then(() => this.refreshAppData(session))
-        .catch(e => this.showToast(e.message, 'error'));
-    };
+    const copyMessage = (msg) => this.copyMessage(msg);
     const toggleFav = (id) => {
       const isFav = st.favoriteIds.includes(id);
       api.toggleFavorito(profile.id, id, isFav)
         .then(() => this.refreshAppData(session))
         .catch(e => this.showToast(e.message, 'error'));
     };
-    const toggleExpand = (id) => this.setState({ expandedIds: { ...st.expandedIds, [id]: !st.expandedIds[id] } });
+    const openPreview = (msg) => this.setState({ showPreviewModal: true, previewingMsgId: msg.id });
 
+    const maxFrequencia = Math.max(1, ...acessoMsgs.map(m => m.frequencia));
     const buildCard = (m) => {
       const isFav = st.favoriteIds.includes(m.id);
-      const expanded = !!st.expandedIds[m.id];
-      const threshold = 130;
-      const isLong = m.conteudo.length > threshold;
-      const displayContent = isLong && !expanded ? m.conteudo.slice(0, threshold).trim() + '…' : m.conteudo;
       return {
         id: m.id, categoria: m.categoria,
         catColor: this.categoryColor(m.categoria),
+        catIcon: this.categoryIcon(m.categoria),
         titleSegments: this.titleSegments(m.titulo, st.searchQuery),
-        displayContent, showToggle: isLong, toggleLabel: expanded ? 'ver menos' : 'ver mais',
-        onToggleExpand: () => toggleExpand(m.id),
-        tagChips: m.tags, frequencia: m.frequencia,
-        isFav, favColor: isFav ? '#F59E0B' : theme.textSecondary,
+        displayContent: m.conteudo,
+        heatWidth: Math.round(100 * m.frequencia / maxFrequencia),
+        tagChips: m.tags.map(tag => ({ label: tag, onClick: () => this.setState({ searchQuery: tag }) })),
+        frequencia: m.frequencia,
+        isFav, favColor: isFav ? '#F5A623' : theme.textTertiary,
         onToggleFav: () => toggleFav(m.id),
         onCardClick: () => copyMessage(m),
         onCardKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyMessage(m); } },
-        onCopy: () => copyMessage(m), copied: st.copiedId === m.id, copyLabel: st.copiedId === m.id ? 'Copiado!' : 'Copiar',
-        copyBtnBg: st.copiedId === m.id ? '#16A34A' : theme.navy,
+        onCopy: () => copyMessage(m), copied: st.copiedId === m.id, copyLabel: st.copiedId === m.id ? 'Copiado' : 'Copiar',
+        copyBtnBg: st.copiedId === m.id ? theme.ok : theme.brand,
+        onPreview: () => openPreview(m),
         onEdit: () => this.openEditMsg(m),
         onDelete: () => this.requestDeleteMsg(m),
-        borderColor: isFav ? '#F59E0B' : theme.border,
-        shadow: isFav ? '0 0 0 1px #F59E0B22' : 'none'
+        borderColor: theme.border
       };
     };
 
-    const filtered = acessoMsgs
-      .filter(m => !st.categoryFilter || m.categoria === st.categoryFilter)
-      .filter(m => this.matchesSearch(m, st.searchQuery));
+    const acessoMsgsFilteredByCategory = acessoMsgs.filter(m => !st.categoryFilter || m.categoria === st.categoryFilter);
+    let filtered = acessoMsgsFilteredByCategory.filter(m => this.matchesSearch(m, st.searchQuery));
     const q = st.searchQuery.trim().toLowerCase();
-    filtered.sort((a, b) => {
-      if (q) {
+    if (q) {
+      filtered.sort((a, b) => {
         const aExact = a.titulo.toLowerCase().includes(q) ? 1 : 0;
         const bExact = b.titulo.toLowerCase().includes(q) ? 1 : 0;
         if (aExact !== bExact) return bExact - aExact;
-      }
-      return b.frequencia - a.frequencia;
-    });
+        return b.frequencia - a.frequencia;
+      });
+    } else if (st.librarySort === 'az') {
+      filtered.sort((a, b) => a.titulo.localeCompare(b.titulo));
+    } else if (st.librarySort === 'used') {
+      filtered.sort((a, b) => b.frequencia - a.frequencia);
+    } else {
+      filtered.sort((a, b) => (st.favoriteIds.includes(b.id) ? 1 : 0) - (st.favoriteIds.includes(a.id) ? 1 : 0) || b.frequencia - a.frequencia);
+    }
 
     const acessoMsgsInCategory = acessoMsgs.filter(m => !st.categoryFilter || m.categoria === st.categoryFilter);
     const miniRowData = (m) => ({
       titulo: m.titulo, catInitial: m.categoria.charAt(0).toUpperCase(), catColor: this.categoryColor(m.categoria),
-      onCopy: () => copyMessage(m), copied: st.copiedId === m.id, copyLabel: st.copiedId === m.id ? 'Copiado!' : 'Copiar'
+      catIcon: this.categoryIcon(m.categoria), categoria: m.categoria, usedLabel: `${m.frequencia}x`,
+      onCopy: () => copyMessage(m), copied: st.copiedId === m.id, copyLabel: st.copiedId === m.id ? 'Copiado' : 'Copiar'
     });
-    const mostUsed = [...acessoMsgsInCategory].sort((a, b) => b.frequencia - a.frequencia).slice(0, 5).map(miniRowData);
+    const rankColors = ['#E8A10B', '#9AA7BD', '#C77B46', theme.textTertiary, theme.textTertiary];
+    const topUsedSource = [...acessoMsgsInCategory].sort((a, b) => b.frequencia - a.frequencia).slice(0, 5);
+    const maxTopUsed = Math.max(1, ...topUsedSource.map(m => m.frequencia));
+    const mostUsed = topUsedSource.map((m, i) => ({
+      ...miniRowData(m), rank: i + 1, rankColor: rankColors[i] || theme.textTertiary,
+      barWidth: Math.round(100 * m.frequencia / maxTopUsed)
+    }));
     const recentList = st.recentIds.map(id => acessoMsgsInCategory.find(m => m.id === id)).filter(Boolean).map(miniRowData);
     const favList = st.favoriteIds.map(id => acessoMsgsInCategory.find(m => m.id === id)).filter(Boolean).map(miniRowData);
 
     const categoriaChips = acessoCats.map(c => ({
       nome: c.nome,
-      bg: st.categoryFilter === c.nome ? theme.navy : theme.pageBg,
-      color: st.categoryFilter === c.nome ? '#fff' : theme.text,
-      onClick: () => this.setState({ categoryFilter: st.categoryFilter === c.nome ? null : c.nome })
+      count: acessoMsgs.filter(m => m.categoria === c.nome).length,
+      icon: this.categoryIcon(c.nome), color: this.categoryColor(c.nome),
+      active: st.categoryFilter === c.nome,
+      onClick: () => this.setState({ categoryFilter: st.categoryFilter === c.nome ? null : c.nome, appView: 'biblioteca' })
     }));
 
     const density = st.density;
     const cardGap = density === 'compact' ? 12 : 16;
     const gridStyle = `column-width:${density === 'compact' ? 260 : 300}px; column-gap:${cardGap}px;`;
     const cardPadding = density === 'compact' ? '14px' : '18px';
+
+    const hour = new Date().getHours();
+    const firstName = (profile.nome || '').split(' ')[0] || '';
+    const heroGreeting = (hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite') + (firstName ? `, ${firstName}!` : '!');
+    const heroStats = [
+      { value: acessoMsgs.length, label: 'MENSAGENS' },
+      { value: acessoMsgs.reduce((a, m) => a + m.frequencia, 0), label: 'CÓPIAS' },
+      { value: acessoMsgs.filter(m => st.favoriteIds.includes(m.id)).length, label: 'FAVORITAS' }
+    ];
 
     const adminQ = st.adminSearchQuery.trim().toLowerCase();
     const adminMsgRows = acessoMsgs.filter(m => !adminQ || m.titulo.toLowerCase().includes(adminQ) || m.conteudo.toLowerCase().includes(adminQ))
@@ -498,7 +585,7 @@ class App {
         id: a.id, nome: a.nome, cor: a.cor, initial: a.nome.charAt(0).toUpperCase(),
         statsLabel: `${msgCount} mensagens · ${linkedCount} usuários`,
         statusLabel: a.ativo ? 'Ativo' : 'Inativo',
-        statusBg: a.ativo ? '#DCFCE7' : '#FEE2E2', statusColor: a.ativo ? '#166534' : '#B91C1C',
+        statusBg: a.ativo ? theme.okSoft : theme.dangerSoft, statusColor: a.ativo ? theme.ok : theme.danger,
         toggleLabel: a.ativo ? 'Desativar' : 'Ativar',
         onToggleStatus: () => this.toggleAcessoStatus(a.id, a.ativo),
         onUsers: () => this.openUsersModal(a.id)
@@ -509,10 +596,14 @@ class App {
       label: t, onRemove: () => this.setState(s => ({ msgForm: { ...s.msgForm, tags: s.msgForm.tags.filter((_, idx) => idx !== i) } }))
     }));
 
+    const appView = (st.appView === 'admin' && !isAdmin) ? 'biblioteca' : (st.appView || 'biblioteca');
+    const pageTitles = { biblioteca: 'Biblioteca de mensagens', visaogeral: 'Visão geral', admin: 'Administração' };
+
     return {
       isLogin: false, isApp: true, isLoading: false, theme,
-      appView: st.appView || 'dashboard',
-      isDashboard: !(st.appView === 'admin' && isAdmin), isAdminView: st.appView === 'admin' && isAdmin,
+      appView,
+      pageTitle: pageTitles[appView],
+      isLib: appView === 'biblioteca', isOver: appView === 'visaogeral', isAdminView: appView === 'admin',
       adminTab: st.adminTab || 'mensagens',
       isAdminMsgs: (st.adminTab || 'mensagens') === 'mensagens', isAdminCats: st.adminTab === 'categorias', isAdminAcessos: st.adminTab === 'acessos',
       isAdminSolicitacoes: st.adminTab === 'solicitacoes',
@@ -520,8 +611,9 @@ class App {
       tabCatsBg: st.adminTab === 'categorias' ? theme.navy : 'transparent', tabCatsColor: st.adminTab === 'categorias' ? '#fff' : theme.text,
       tabAcessosBg: st.adminTab === 'acessos' ? theme.navy : 'transparent', tabAcessosColor: st.adminTab === 'acessos' ? '#fff' : theme.text,
       tabSolicitacoesBg: st.adminTab === 'solicitacoes' ? theme.navy : 'transparent', tabSolicitacoesColor: st.adminTab === 'solicitacoes' ? '#fff' : theme.text,
-      isSuperAdmin, isAdmin,
-      goDashboard: () => this.setState({ appView: 'dashboard', userMenuOpen: false }),
+      isSuperAdmin, isAdmin, isAdminNow: isAdmin,
+      goBiblioteca: () => this.setState({ appView: 'biblioteca', userMenuOpen: false }),
+      goVisaoGeral: () => this.setState({ appView: 'visaogeral', userMenuOpen: false }),
       goAdmin: () => this.setState({ appView: 'admin', userMenuOpen: false, adminTab: 'mensagens' }),
       setAdminTabMsgs: () => this.setState({ adminTab: 'mensagens' }),
       setAdminTabCats: () => this.setState({ adminTab: 'categorias' }),
@@ -548,17 +640,48 @@ class App {
       darkModeIcon: st.darkMode ? '☀' : '☾',
       toggleDarkMode: () => { const val = !st.darkMode; this.setState({ darkMode: val }); try { localStorage.setItem('dp_darkmode', val ? '1' : '0'); } catch (e) {} },
 
-      chipAllBg: !st.categoryFilter ? theme.navy : theme.pageBg, chipAllColor: !st.categoryFilter ? '#fff' : theme.text,
+      chipAllActive: !st.categoryFilter, chipAllCount: acessoMsgs.length,
       setCategoryAll: () => this.setState({ categoryFilter: null }),
       categoriaChips,
 
+      heroGreeting, heroStats,
       mostUsedList: mostUsed, recentList, hasRecent: recentList.length > 0,
-      favList,
+      favList, hasFav: favList.length > 0,
 
-      resultsCountLabel: `${filtered.length} mensagem${filtered.length === 1 ? '' : 's'} encontrada${filtered.length === 1 ? '' : 's'}`,
+      resultsCountLabel: filtered.length === 1 ? '1 mensagem encontrada' : `${filtered.length} mensagens encontradas`,
       hasResults: filtered.length > 0,
       gridStyle, cardPadding, cardGap,
       cardList: filtered.map(buildCard),
+
+      librarySort: st.librarySort,
+      onLibrarySortChange: (e) => this.setState({ librarySort: e.target.value }),
+      libraryViewMode: st.libraryViewMode,
+      isGridView: st.libraryViewMode !== 'list', isListView: st.libraryViewMode === 'list',
+      setGridView: () => this.setState({ libraryViewMode: 'grid' }),
+      setListView: () => this.setState({ libraryViewMode: 'list' }),
+
+      showPreviewModal: st.showPreviewModal,
+      closePreview: () => this.setState({ showPreviewModal: false }),
+      previewingMsg: (() => {
+        const m = acessoMsgs.find(x => x.id === st.previewingMsgId);
+        if (!m) return null;
+        return {
+          titulo: m.titulo, categoria: m.categoria, catColor: this.categoryColor(m.categoria), catIcon: this.categoryIcon(m.categoria),
+          conteudo: m.conteudo, onCopy: () => copyMessage(m)
+        };
+      })(),
+
+      paletteOpen: st.paletteOpen, paletteQuery: st.paletteQuery, paletteInputRef: (el) => { this.paletteEl = el; if (el && document.activeElement !== el) el.focus(); },
+      onPaletteQueryChange: (e) => this.setState({ paletteQuery: e.target.value, paletteIndex: 0 }),
+      openPalette: () => this.setState({ paletteOpen: true, paletteQuery: '', paletteIndex: 0 }),
+      closePalette: () => this.setState({ paletteOpen: false }),
+      paletteRows: st.paletteOpen ? this.paletteList().map((m, i) => ({
+        titulo: m.titulo, categoria: m.categoria, catColor: this.categoryColor(m.categoria),
+        active: i === st.paletteIndex,
+        onPick: () => this.copyFromPalette(m),
+        onHover: () => this.setState({ paletteIndex: i })
+      })) : [],
+      paletteEmpty: st.paletteOpen && this.paletteList().length === 0,
 
       categorias: acessoCats,
       adminSearchQuery: st.adminSearchQuery, onAdminSearchChange: (e) => this.setState({ adminSearchQuery: e.target.value }),
@@ -727,7 +850,7 @@ class App {
       await this.refreshAppData(this.state.currentUser);
       if (wasCreate && saved) {
         navigator.clipboard && navigator.clipboard.writeText(saved.conteudo).catch(() => {});
-        this.setState({ appView: 'dashboard', copiedId: saved.id });
+        this.setState({ appView: 'biblioteca', copiedId: saved.id });
         setTimeout(() => this.setState({ copiedId: null }), 1400);
         this.showToast('Mensagem criada e copiada!', 'success');
       } else {
@@ -901,197 +1024,302 @@ class App {
 
     if (v.isLogin) {
       body += `
-      <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:${t.pageBg}; padding:24px;">
-        <div style="width:100%; max-width:400px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:16px; padding:40px 36px; box-shadow:0 20px 50px -20px rgba(11,45,107,0.25);">
-          <div style="display:flex; justify-content:center; margin-bottom:28px;">
-            <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="309" height="52" style="height:52px; width:auto; ${t.logoGlow}" />
+      <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:${t.pageBg}; padding:24px; position:relative; overflow:hidden;">
+        <div style="position:absolute; width:520px; height:520px; border-radius:50%; background:${t.accentSoft}; filter:blur(80px); top:-160px; right:-120px;"></div>
+        <div style="position:absolute; width:420px; height:420px; border-radius:50%; background:${t.accentSoft}; filter:blur(90px); bottom:-140px; left:-100px;"></div>
+        <div style="position:relative; width:100%; max-width:420px; background:${t.panel}; ${t.glassEffect} border:1px solid ${t.border}; border-radius:${t.radiusXl}; padding:40px 36px; box-shadow:${t.shadowMd};">
+          <div style="display:flex; justify-content:center; margin-bottom:24px;">
+            <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="309" height="52" style="height:48px; width:auto; ${t.logoGlow}" />
           </div>
           <div style="text-align:center; margin-bottom:28px;">
-            <div style="font-size:20px; font-weight:800; color:${t.text};">Padrões de atendimento</div>
+            <div style="font-size:19px; font-weight:800; color:${t.text}; font-family:${t.fontDisplay};">Padrões de atendimento</div>
             <div style="font-size:14px; color:${t.textSecondary}; margin-top:4px;">Acesse com sua conta para continuar</div>
           </div>
-          ${v.loginError ? `<div style="background:#FEE2E2; color:#B91C1C; font-size:13px; font-weight:600; padding:10px 14px; border-radius:10px; margin-bottom:16px;">${esc(v.loginError)}</div>` : ''}
+          ${v.loginError ? `<div style="background:${t.dangerSoft}; color:${t.danger}; font-size:13px; font-weight:600; padding:10px 14px; border-radius:${t.radiusSm}; margin-bottom:16px;">${esc(v.loginError)}</div>` : ''}
           <div style="display:flex; flex-direction:column; gap:14px;">
             <div>
               <label style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">E-mail</label>
-              <input type="text" autocapitalize="off" autocorrect="off" spellcheck="false" ${v.loggingIn ? 'disabled' : ''} data-focus="loginEmail" placeholder="seuemail@empresa.com" value="${esc(v.loginEmail)}" data-input="${H(v.onLoginEmailChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 14px; border-radius:10px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
+              <input type="text" autocapitalize="off" autocorrect="off" spellcheck="false" ${v.loggingIn ? 'disabled' : ''} data-focus="loginEmail" placeholder="seuemail@empresa.com" value="${esc(v.loginEmail)}" data-input="${H(v.onLoginEmailChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 14px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
             </div>
             <div>
               <label style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Senha</label>
               <div style="position:relative;">
-                <input type="${v.showLoginPassword ? 'text' : 'password'}" ${v.loggingIn ? 'disabled' : ''} data-focus="loginPassword" placeholder="••••••••" value="${esc(v.loginPassword)}" data-input="${H(v.onLoginPasswordChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 44px 12px 14px; border-radius:10px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
+                <input type="${v.showLoginPassword ? 'text' : 'password'}" ${v.loggingIn ? 'disabled' : ''} data-focus="loginPassword" placeholder="••••••••" value="${esc(v.loginPassword)}" data-input="${H(v.onLoginPasswordChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 44px 12px 14px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
                 <button type="button" data-click="${H(v.onToggleLoginPassword)}" tabindex="-1" aria-label="${v.showLoginPassword ? 'Ocultar senha' : 'Mostrar senha'}" title="${v.showLoginPassword ? 'Ocultar senha' : 'Mostrar senha'}" style="position:absolute; right:6px; top:50%; transform:translateY(-50%); border:none; background:transparent; color:${t.textSecondary}; cursor:pointer; padding:6px; display:flex; align-items:center; justify-content:center; border-radius:6px;">${v.showLoginPassword ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.6 18.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a18.6 18.6 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>` : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>`}</button>
               </div>
             </div>
-            <button data-click="${H(v.handleLogin)}" ${v.loggingIn ? 'disabled' : ''} style="margin-top:8px; padding:13px; border-radius:10px; border:none; background:${t.navy}; color:#fff; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit; opacity:${v.loggingIn ? '0.75' : '1'};">${esc(v.loginBtnLabel)}</button>
+            <button data-click="${H(v.handleLogin)}" ${v.loggingIn ? 'disabled' : ''} style="margin-top:8px; padding:13px; border-radius:${t.radiusSm}; border:none; background:${t.brandGradient}; color:#fff; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit; box-shadow:${t.glow}; opacity:${v.loggingIn ? '0.75' : '1'};">${esc(v.loginBtnLabel)}</button>
           </div>
         </div>
       </div>`;
     }
 
     if (v.isApp) {
-      body += `<div>` + this.viewHeader(v, t, H);
-      if (v.isDashboard) body += this.viewDashboard(v, t, H);
+      body += `<div style="display:grid; grid-template-columns:262px 1fr; min-height:100vh; align-items:start;" class="dp-app-shell">`
+        + this.viewSidebar(v, t, H)
+        + `<div style="min-width:0;">` + this.viewTopHeader(v, t, H);
+      if (v.isLib) body += this.viewLibrary(v, t, H);
+      if (v.isOver) body += this.viewVisaoGeral(v, t, H);
       if (v.isAdminView) body += this.viewAdmin(v, t, H);
-      body += `</div>`;
+      body += `</div></div>`;
     }
 
     body += this.viewModals(v, t, H);
 
-    return `<div style="min-height:100vh; background:${t.pageBg}; color:${t.text}; transition:background .2s,color .2s;">${body}</div>`;
+    return `<div style="min-height:100vh; background:${t.pageBg}; color:${t.text}; font-family:${t.fontBody}; transition:background .2s,color .2s;">${body}</div>`;
   }
 
-  viewHeader(v, t, H) {
-    return `
-    <div style="position:sticky; top:0; z-index:40; background:${t.cardBg}; border-bottom:1px solid ${t.border}; padding:14px 24px;">
-      <div style="display:flex; align-items:center; gap:20px; max-width:1400px; margin:0 auto; flex-wrap:wrap;">
-        <div role="button" tabindex="0" style="display:flex; align-items:center; gap:12px; cursor:pointer; border-radius:8px;" data-click="${H(v.goDashboard)}">
-          <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="140" height="24" style="height:24px; width:auto; ${t.logoGlow}" />
-          <div style="width:1px; height:26px; background:${t.border};"></div>
-          <div style="font-size:15px; font-weight:800; color:${t.text}; line-height:1.2;">Padrões de atendimento</div>
-        </div>
-        ${v.showAcessoSelector ? `
-          <select data-change="${H(v.onChangeActiveAcesso)}" style="padding:8px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-weight:700; font-family:inherit;">
-            ${v.userAcessosOptions.map(opt => `<option value="${esc(opt.id)}" ${opt.id === v.activeAcessoId ? 'selected' : ''}>${esc(opt.nome)}</option>`).join('')}
-          </select>` : ''}
-        <div style="flex:1; min-width:220px; position:relative; max-width:640px;">
-          <div style="position:absolute; left:14px; top:50%; transform:translateY(-50%); width:15px; height:15px; border:2px solid ${t.textSecondary}; border-radius:50%;"></div>
-          <div style="position:absolute; left:22px; top:63%; width:8px; height:2px; background:${t.textSecondary}; transform:rotate(45deg); border-radius:2px;"></div>
-          <input data-ref="${H(v.searchInputRef)}" data-focus="search" type="text" placeholder="Buscar por título, conteúdo, tag ou categoria…" value="${esc(v.searchQuery)}" data-input="${H(v.onSearchChange)}" style="width:100%; padding:13px 70px 13px 40px; border-radius:12px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
-          <div style="position:absolute; right:12px; top:50%; transform:translateY(-50%); font-size:11px; font-weight:700; color:${t.textSecondary}; background:${t.pageBg}; border:1px solid ${t.border}; padding:3px 8px; border-radius:6px;">${esc(v.shortcutLabel)}</div>
-        </div>
-        <div style="display:flex; align-items:center; gap:10px; margin-left:auto;">
-          <button data-click="${H(v.toggleDarkMode)}" title="Alternar tema" style="width:34px; height:34px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:transparent; color:${t.text}; cursor:pointer; font-size:15px; box-shadow:${t.shadowSm};">${v.darkModeIcon}</button>
-          <div style="position:relative;">
-            <div role="button" tabindex="0" aria-haspopup="true" aria-expanded="${v.userMenuOpen}" data-click="${H(v.toggleUserMenu)}" style="display:flex; align-items:center; gap:8px; cursor:pointer; padding:6px 10px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; box-shadow:${t.shadowSm};">
-              <div style="width:28px; height:28px; border-radius:50%; background:linear-gradient(135deg, ${t.cyan}dd 0%, ${t.navy}dd 100%); color:#fff; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; box-shadow:0 2px 8px rgba(27,167,220,0.3); position:relative; overflow:hidden;"><div style="position:absolute; inset:0; background:radial-gradient(circle at 30% 30%, rgba(255,255,255,0.15), transparent); border-radius:50%;"></div><span style="position:relative; z-index:1;">${esc(v.currentUser.iniciais)}</span></div>
-              <div style="line-height:1.15;">
-                <div style="font-size:13px; font-weight:700;">${esc(v.currentUser.nome)}</div>
-                <div style="font-size:11px; color:${t.textSecondary};">${esc(v.currentUser.perfilLabel)}</div>
-              </div>
-            </div>
-            ${v.userMenuOpen ? `
-              <div style="position:absolute; right:0; top:44px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusSm}; box-shadow:${t.shadowLg}; min-width:200px; padding:8px; z-index:50;">
-                ${v.isAdmin ? `<div data-click="${H(v.goAdmin)}" style="padding:10px 12px; border-radius:${t.radiusSm}; cursor:pointer; font-size:13px; font-weight:700; color:${t.text}; display:flex; align-items:center; justify-content:space-between; gap:8px;">Painel Administrativo${v.isSuperAdmin && v.solicitacoesCount > 0 ? `<span style="background:#DC2626; color:#fff; font-size:10px; font-weight:800; padding:2px 7px; border-radius:999px;">${v.solicitacoesCount}</span>` : ''}</div>` : ''}
-                <div data-click="${H(v.logout)}" style="padding:10px 12px; border-radius:${t.radiusSm}; cursor:pointer; font-size:13px; font-weight:700; color:#DC2626;">Sair</div>
-              </div>` : ''}
-          </div>
-        </div>
-      </div>
-      <div style="max-width:1400px; margin:12px auto 0; display:flex; gap:8px; flex-wrap:wrap;">
-        <div role="button" tabindex="0" data-click="${H(v.setCategoryAll)}" style="padding:7px 14px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; background:${v.chipAllBg}; color:${v.chipAllColor}; box-shadow:${v.chipAllBg === t.navy ? t.shadowSm : 'none'};">Todas</div>
-        ${v.categoriaChips.map(chip => `<div role="button" tabindex="0" data-click="${H(chip.onClick)}" style="padding:7px 14px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; background:${chip.bg}; color:${chip.color};">${esc(chip.nome)}</div>`).join('')}
-      </div>
-    </div>`;
-  }
-
-  viewDashboard(v, t, H) {
-    const miniRow = (m) => `
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-radius:${t.radiusSm}; background:${t.pageBg};">
-        <div style="font-size:13px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(m.titulo)}</div>
-        <button data-click="${H(m.onCopy)}" style="flex-shrink:0; border:none; background:${t.navy}; color:#fff; font-size:11px; font-weight:700; padding:5px 10px; border-radius:6px; cursor:pointer;">${esc(m.copyLabel)}</button>
+  viewSidebar(v, t, H) {
+    const navIcon = (path) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">${path}</svg>`;
+    const navItem = (icon, label, active, onClick, badge) => `
+      <div role="button" tabindex="0" data-click="${H(onClick)}" style="display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:10px 12px; font-size:13.5px; font-weight:800; cursor:pointer; transition:background .15s; background:${active ? t.accentSoft : 'transparent'}; color:${active ? t.accent : t.textSecondary}; margin-bottom:2px;">
+        <span style="width:3px; height:16px; border-radius:3px; background:${active ? t.accent : 'transparent'}; flex-shrink:0;"></span>${icon}${esc(label)}
+        ${badge ? `<span style="margin-left:auto; background:${t.danger}; color:#fff; font-size:10px; font-weight:800; border-radius:999px; padding:2px 8px;">${badge}</span>` : ''}
       </div>`;
 
-    const starIcon = (filled) => filled
-      ? `<svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6.6 7.1.7-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7-5.4-4.7 7.1-.7z"/></svg>`
-      : `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2.5l2.9 6.6 7.1.7-5.4 4.7 1.7 7-6.3-3.9-6.3 3.9 1.7-7-5.4-4.7 7.1-.7z"/></svg>`;
-    const clipboardIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/></svg>`;
-    const checkIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="flex-shrink:0;"><path d="M20 6L9 17l-5-5"/></svg>`;
-    const fireIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3-3 4-3 8a4 4 0 0 0 8 0c1.5 1.5 2 3.5 2 5a7 7 0 1 1-14 0c0-4 3-6 4-8 1-2 1.5-3.5 3-5z"/></svg>`;
-    const clockIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>`;
-    const panelHeader = (icon, label, color) => `<div style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:700; color:${t.text}; margin-bottom:10px;">${icon}<span style="color:${t.textSecondary};">${esc(label)}</span></div>`;
+    return `
+    <aside class="dp-sidebar" style="position:sticky; top:0; height:100vh; display:flex; flex-direction:column; gap:2px; background:${t.cardBg}; border-right:1px solid ${t.border}; padding:20px 14px 16px; overflow:auto;">
+      <div role="button" tabindex="0" data-click="${H(v.goBiblioteca)}" style="display:flex; flex-direction:column; gap:2px; padding:2px 8px 18px; cursor:pointer;">
+        <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="160" height="26" style="height:24px; width:auto; ${t.logoGlow}" />
+        <span style="font-size:11px; color:${t.textTertiary}; font-weight:700;">Padrões de atendimento</span>
+      </div>
+      ${navItem(navIcon('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'), 'Biblioteca', v.isLib, v.goBiblioteca)}
+      ${navItem(navIcon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>'), 'Visão geral', v.isOver, v.goVisaoGeral)}
+      ${v.isAdminNow ? navItem(navIcon('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'), 'Administração', v.isAdminView, v.goAdmin, v.isSuperAdmin && v.solicitacoesCount > 0 ? v.solicitacoesCount : null) : ''}
+      <div style="font-size:10.5px; font-weight:800; letter-spacing:1.4px; color:${t.textTertiary}; padding:18px 10px 8px;">CATEGORIAS</div>
+      <div role="button" tabindex="0" data-click="${H(v.setCategoryAll)}" style="display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:8px 12px; font-size:13px; font-weight:700; cursor:pointer; background:${v.chipAllActive ? t.inputBg : 'transparent'}; color:${v.chipAllActive ? t.text : t.textSecondary}; box-shadow:${v.chipAllActive ? `inset 0 0 0 1px ${t.border2}` : 'none'}; margin-bottom:2px;">
+        <span style="width:8px; height:8px; border-radius:50%; background:${t.textTertiary}; flex-shrink:0;"></span>Todas<span style="margin-left:auto; font-size:11px; font-weight:700; color:${t.textTertiary};">${v.chipAllCount}</span>
+      </div>
+      ${v.categoriaChips.map(chip => `
+        <div role="button" tabindex="0" data-click="${H(chip.onClick)}" style="display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:8px 12px; font-size:13px; font-weight:700; cursor:pointer; background:${chip.active ? t.inputBg : 'transparent'}; color:${chip.active ? t.text : t.textSecondary}; box-shadow:${chip.active ? `inset 0 0 0 1px ${t.border2}` : 'none'}; margin-bottom:2px;">
+          <span style="width:8px; height:8px; border-radius:50%; background:${chip.color}; flex-shrink:0;"></span>${esc(chip.nome)}<span style="margin-left:auto; font-size:11px; font-weight:700; color:${t.textTertiary};">${chip.count}</span>
+        </div>`).join('')}
+      <div style="flex:1;"></div>
+      <div style="border-top:1px solid ${t.border}; padding-top:12px; display:flex; flex-direction:column; gap:8px;">
+        <button data-click="${H(v.toggleDarkMode)}" style="display:flex; align-items:center; gap:10px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer;">${v.darkModeIcon} Alternar tema</button>
+        <div style="display:flex; align-items:center; gap:10px; padding:4px;">
+          <div style="width:32px; height:32px; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${esc(v.currentUser.iniciais)}</div>
+          <div style="flex:1; min-width:0; line-height:1.15;">
+            <div style="font-size:13px; font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(v.currentUser.nome)}</div>
+            <div style="font-size:11px; color:${t.textTertiary};">${esc(v.currentUser.perfilLabel)}</div>
+          </div>
+          <button data-click="${H(v.logout)}" title="Sair" style="border:0; background:transparent; color:${t.textTertiary}; cursor:pointer; padding:6px; border-radius:${t.radiusSm}; display:flex;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+          </button>
+        </div>
+      </div>
+    </aside>`;
+  }
+
+  viewTopHeader(v, t, H) {
+    const showLibraryTools = v.isLib || v.isOver;
+    return `
+    <header style="position:sticky; top:0; z-index:40; background:${t.panel}; ${t.glassEffect} border-bottom:1px solid ${t.border}; padding:14px 28px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+      <h1 style="margin:0; font-size:20px; font-weight:800; letter-spacing:-0.4px; font-family:${t.fontDisplay};">${esc(v.pageTitle)}</h1>
+      ${v.showAcessoSelector ? `
+        <select data-change="${H(v.onChangeActiveAcesso)}" style="padding:8px 12px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-weight:700; font-family:inherit;">
+          ${v.userAcessosOptions.map(opt => `<option value="${esc(opt.id)}" ${opt.id === v.activeAcessoId ? 'selected' : ''}>${esc(opt.nome)}</option>`).join('')}
+        </select>` : ''}
+      <div style="flex:1;"></div>
+      ${showLibraryTools ? `
+        <div style="position:relative; width:min(360px,100%);">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="${t.textTertiary}" stroke-width="2.2" stroke-linecap="round" style="position:absolute; left:13px; top:50%; transform:translateY(-50%);"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input data-ref="${H(v.searchInputRef)}" data-focus="search" type="text" placeholder="Buscar mensagem, tag, categoria…  ( / )" value="${esc(v.searchQuery)}" data-input="${H(v.onSearchChange)}" style="width:100%; padding:10px 14px 10px 36px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13.5px; font-family:inherit;" />
+        </div>
+        <button data-click="${H(v.openPalette)}" title="Busca rápida" style="border:1px solid ${t.border}; background:${t.cardBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:11px; font-weight:700; cursor:pointer;">${esc(v.shortcutLabel)}</button>
+        <button data-click="${H(v.openCreateMsg)}" style="display:flex; align-items:center; gap:7px; border:0; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; font-weight:800; font-size:13.5px; padding:11px 18px; cursor:pointer; box-shadow:${t.glow};">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Nova mensagem
+        </button>` : ''}
+    </header>`;
+  }
+
+  static icons(t) {
+    return {
+      star: (filled, color) => filled
+        ? `<svg width="17" height="17" viewBox="0 0 24 24" fill="${color || 'currentColor'}" stroke="${color || 'currentColor'}" stroke-width="1.8" stroke-linejoin="round"><polygon points="12 2.5 14.9 9.1 22 9.8 16.6 14.5 18.3 21.5 12 17.6 5.7 21.5 7.4 14.5 2 9.8 9.1 9.1"/></svg>`
+        : `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="${color || 'currentColor'}" stroke-width="1.8" stroke-linejoin="round"><polygon points="12 2.5 14.9 9.1 22 9.8 16.6 14.5 18.3 21.5 12 17.6 5.7 21.5 7.4 14.5 2 9.8 9.1 9.1"/></svg>`,
+      clipboard: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+      check: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 6L9 17l-5-5"/></svg>`,
+      eye: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
+      edit: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>`,
+      trash: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>`,
+      fire: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3-3 4-3 8a4 4 0 0 0 8 0c1.5 1.5 2 3.5 2 5a7 7 0 1 1-14 0c0-4 3-6 4-8 1-2 1.5-3.5 3-5z"/></svg>`,
+      clock: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>`,
+      search: `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>`
+    };
+  }
+
+  viewLibrary(v, t, H) {
+    const ic = App.icons(t);
+    const actionBtn = (icon, onClick, label, danger) => `<button data-click="${H(onClick)}" title="${esc(label)}" aria-label="${esc(label)}" style="width:30px; height:30px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:transparent; color:${danger ? t.danger : t.textSecondary}; cursor:pointer; display:flex; align-items:center; justify-content:center;">${icon}</button>`;
 
     const card = (m) => `
-      <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" data-keydown="${H(m.onCardKeyDown)}" role="button" tabindex="0" aria-label="Copiar mensagem" title="Clique para copiar" class="dp-card" style="background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${m.shadow === 'none' ? t.shadowMd : m.shadow}; cursor:pointer; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); break-inside:avoid; margin-bottom:${v.cardGap}px;">
+      <div data-key="${esc(m.id)}" class="dp-card" style="position:relative; overflow:hidden; background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${t.shadowMd}; break-inside:avoid; margin-bottom:${v.cardGap}px;">
+        <span style="position:absolute; top:0; left:0; height:3px; border-radius:0 3px 3px 0; width:${m.heatWidth}%; background:${t.brandGradient}; opacity:${m.frequencia ? .85 : 0};"></span>
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
           <div style="display:flex; align-items:center; gap:8px;">
-            ${this.avatarIcon(this.categoryIcon(m.categoria), m.catColor, 26)}
+            ${this.avatarIcon(m.catIcon, m.catColor, 26)}
             <div style="font-size:11px; font-weight:700; color:${t.textSecondary};">${esc(m.categoria)}</div>
           </div>
-          <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; line-height:1; display:flex; transition:transform .15s ease;" onmousedown="this.style.transform='scale(0.8)'" onmouseup="this.style.transform='scale(1)'">${starIcon(m.isFav)}</button>
+          <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; line-height:1; display:flex;">${ic.star(m.isFav)}</button>
         </div>
-        <div style="font-size:15px; font-weight:800; color:${t.text};">${m.titleSegments.map(seg => `<span style="${seg.style}">${esc(seg.text)}</span>`).join('')}</div>
-        <div style="font-size:13px; color:${t.textSecondary}; line-height:1.5; white-space:pre-wrap; word-break:break-word; overflow-wrap:break-word; max-width:100%;">${esc(m.displayContent)}</div>
-        ${m.showToggle ? `<div data-click="${H(m.onToggleExpand)}" style="font-size:12px; font-weight:700; color:${t.cyan}; cursor:pointer;">${esc(m.toggleLabel)}</div>` : ''}
+        <div style="font-size:15.5px; font-weight:700; color:${t.text}; letter-spacing:-0.2px;">${m.titleSegments.map(seg => `<span style="${seg.style}">${esc(seg.text)}</span>`).join('')}</div>
+        <div style="font-size:13.5px; color:${t.textSecondary}; line-height:1.55; white-space:pre-line; word-break:break-word; overflow-wrap:break-word; max-width:100%; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;">${esc(m.displayContent)}</div>
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
-          ${m.tagChips.map(tag => `<div style="font-size:11px; font-weight:700; color:${t.textSecondary}; background:${t.pageBg}; padding:4px 9px; border-radius:999px;">${esc(tag)}</div>`).join('')}
+          ${m.tagChips.map(tag => `<button data-click="${H(tag.onClick)}" style="border:0; background:${t.accentSoft}; color:${t.accent}; font-size:11.5px; font-weight:700; border-radius:999px; padding:3px 10px; cursor:pointer;">#${esc(tag.label)}</button>`).join('')}
         </div>
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-top:4px; padding-top:10px; border-top:1px solid ${t.border};">
-          <div style="font-size:11px; color:${t.textSecondary}; font-weight:600;">usada ${esc(m.frequencia)}x</div>
-          <div style="display:flex; gap:8px;">
-            <button data-click="${H(m.onDelete)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:${t.radiusSm}; cursor:pointer;">Excluir</button>
-            <button data-click="${H(m.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:${t.radiusSm}; cursor:pointer;">Editar</button>
-            <button data-click="${H(m.onCopy)}" style="border:none; background:${m.copyBtnBg}; color:#fff; font-size:12px; font-weight:700; padding:7px 14px; border-radius:${t.radiusSm}; cursor:pointer; display:flex; align-items:center; gap:6px;">${m.copied ? checkIcon : clipboardIcon}${esc(m.copyLabel)}</button>
-          </div>
+        <div style="margin-top:auto; border-top:1px solid ${t.border}; padding-top:10px; display:flex; align-items:center; gap:6px;">
+          <span style="font-size:11.5px; color:${t.textTertiary}; font-weight:700;">usada ${esc(m.frequencia)}x</span>
+          <span style="flex:1;"></span>
+          ${actionBtn(ic.eye, m.onPreview, 'Visualizar')}
+          ${actionBtn(ic.edit, m.onEdit, 'Editar')}
+          ${actionBtn(ic.trash, m.onDelete, 'Excluir', true)}
+          <button data-click="${H(m.onCopy)}" style="display:flex; align-items:center; gap:6px; border:none; background:${m.copyBtnBg}; color:#fff; font-size:12.5px; font-weight:700; padding:7px 13px; border-radius:${t.radiusSm}; cursor:pointer;">${m.copied ? ic.check : ic.clipboard}${esc(m.copyLabel)}</button>
         </div>
       </div>`;
 
+    const row = (m) => `
+      <div data-key="${esc(m.id)}" style="display:flex; align-items:center; gap:14px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:12px 16px; margin-bottom:8px;">
+        ${this.avatarIcon(m.catIcon, m.catColor, 32)}
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:14px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.titleSegments.map(seg => `<span style="${seg.style}">${esc(seg.text)}</span>`).join('')}</div>
+          <div style="font-size:12px; color:${t.textTertiary}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(m.categoria)} · usada ${esc(m.frequencia)}x</div>
+        </div>
+        <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; display:flex; flex-shrink:0;">${ic.star(m.isFav)}</button>
+        ${actionBtn(ic.eye, m.onPreview, 'Visualizar')}
+        ${actionBtn(ic.edit, m.onEdit, 'Editar')}
+        ${actionBtn(ic.trash, m.onDelete, 'Excluir', true)}
+        <button data-click="${H(m.onCopy)}" style="display:flex; align-items:center; gap:6px; border:none; background:${m.copyBtnBg}; color:#fff; font-size:12.5px; font-weight:700; padding:7px 13px; border-radius:${t.radiusSm}; cursor:pointer; flex-shrink:0;">${m.copied ? ic.check : ic.clipboard}${esc(m.copyLabel)}</button>
+      </div>`;
+
+    const viewBtn = (active, onClick, path) => `<button data-click="${H(onClick)}" style="border:0; border-radius:8px; padding:6px 10px; cursor:pointer; display:flex; align-items:center; justify-content:center; background:${active ? t.cardBg : 'transparent'}; color:${active ? t.text : t.textTertiary}; box-shadow:${active ? t.shadowSm : 'none'};"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${path}</svg></button>`;
+
     return `
-    <div data-key="view-dashboard" class="dp-view-enter" style="max-width:1400px; margin:0 auto; padding:24px;">
-      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; margin-bottom:28px;">
-        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:16px; box-shadow:${t.shadowSm}; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);">
-          ${panelHeader(fireIcon, 'MAIS USADAS', '#D97706')}
-          <div style="display:flex; flex-direction:column; gap:6px;">${v.mostUsedList.map(miniRow).join('')}</div>
+    <main data-key="view-library" class="dp-view-enter" style="padding:22px 28px 60px;">
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap;">
+        <div style="font-weight:800; font-size:14px; color:${t.textSecondary};">${esc(v.resultsCountLabel)}</div>
+        <div style="flex:1;"></div>
+        <select data-change="${H(v.onLibrarySortChange)}" style="padding:8px 12px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.cardBg}; color:${t.textSecondary}; font-size:13px; font-weight:700; font-family:inherit; cursor:pointer;">
+          <option value="relevance" ${v.librarySort === 'relevance' ? 'selected' : ''}>Favoritas primeiro</option>
+          <option value="used" ${v.librarySort === 'used' ? 'selected' : ''}>Mais usadas</option>
+          <option value="az" ${v.librarySort === 'az' ? 'selected' : ''}>A → Z</option>
+        </select>
+        <div style="display:flex; gap:3px; background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusSm}; padding:3px;">
+          ${viewBtn(v.isGridView, v.setGridView, '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>')}
+          ${viewBtn(v.isListView, v.setListView, '<path d="M4 6h16M4 12h16M4 18h16"/>')}
         </div>
-        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:16px; box-shadow:${t.shadowSm}; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);">
-          ${panelHeader(clockIcon, 'RECENTES', t.cyan)}
-          <div style="display:flex; flex-direction:column; gap:6px;">
-            ${v.hasRecent ? v.recentList.map(miniRow).join('') : `<div><span style="font-size:13px; color:${t.textSecondary};">Suas cópias recentes aparecem aqui.</span></div>`}
-          </div>
-        </div>
-        <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:16px; box-shadow:${t.shadowSm}; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);">
-          ${panelHeader(starIcon(true), 'FAVORITAS', '#4F46E5')}
-          <div style="display:flex; flex-direction:column; gap:6px;">
-            ${v.favList.length ? v.favList.map(miniRow).join('') : `<div><span style="font-size:13px; color:${t.textSecondary};">Marque mensagens com a estrela para vê-las aqui.</span></div>`}
-          </div>
-        </div>
-      </div>
-      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
-        <div style="font-size:14px; font-weight:700; color:${t.textSecondary};">${esc(v.resultsCountLabel)}</div>
-        <button data-click="${H(v.openCreateMsg)}" style="border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; padding:9px 16px; border-radius:${t.radiusSm}; cursor:pointer;">+ Nova mensagem</button>
       </div>
       ${v.hasResults
-        ? `<div style="${v.gridStyle}">${v.cardList.map(card).join('')}</div>`
-        : `<div>
-            <div style="text-align:center; padding:60px 20px; background:${t.cardBg}; border:1px dashed ${t.border}; border-radius:16px;">
-              <div style="font-size:16px; font-weight:800; color:${t.text}; margin-bottom:6px;">Nenhum resultado encontrado</div>
-              <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:18px;">Tente uma categoria ou uma das mensagens mais usadas abaixo.</div>
-              <div style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
-                ${v.categoriaChips.map(chip => `<div data-click="${H(chip.onClick)}" style="padding:7px 14px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; background:${t.pageBg}; color:${t.text}; border:1px solid ${t.border};">${esc(chip.nome)}</div>`).join('')}
-              </div>
-            </div>
+        ? (v.isGridView ? `<div style="${v.gridStyle}">${v.cardList.map(card).join('')}</div>` : `<div>${v.cardList.map(row).join('')}</div>`)
+        : `<div style="text-align:center; padding:70px 20px; color:${t.textTertiary};">
+            <div style="display:flex; justify-content:center; margin-bottom:12px;">${ic.search}</div>
+            <div style="font-weight:800; font-size:17px; color:${t.textSecondary};">Nenhuma mensagem encontrada</div>
+            <div style="font-size:14px; margin-top:5px;">Ajuste a busca ou os filtros de categoria.</div>
           </div>`}
-    </div>`;
+    </main>`;
+  }
+
+  viewVisaoGeral(v, t, H) {
+    const ic = App.icons(t);
+    const panelHeader = (icon, label, bg, color) => `<div style="display:flex; align-items:center; gap:10px; margin-bottom:18px;"><span style="width:34px; height:34px; border-radius:11px; background:${bg}; color:${color}; display:flex; align-items:center; justify-content:center;">${icon}</span><span style="font-weight:700; font-size:16px; font-family:${t.fontDisplay};">${esc(label)}</span></div>`;
+    const rankRow = (m) => `
+      <div style="display:flex; align-items:center; gap:12px; background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:11px 14px;">
+        <span style="width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px; flex-shrink:0; background:${m.rankColor}2E; color:${m.rankColor};">${m.rank}</span>
+        <span style="flex:1; min-width:0;">
+          <span style="display:block; font-weight:800; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(m.titulo)}</span>
+          <span style="display:flex; align-items:center; gap:8px; margin-top:5px;">
+            <span style="flex:1; height:5px; border-radius:5px; background:${t.border}; overflow:hidden; display:block;"><span style="display:block; height:100%; width:${m.barWidth}%; border-radius:5px; background:${t.brandGradient};"></span></span>
+            <span style="font-size:11px; color:${t.textTertiary}; font-weight:800; white-space:nowrap;">${esc(m.usedLabel)}</span>
+          </span>
+        </span>
+        <button data-click="${H(m.onCopy)}" style="flex-shrink:0; border:none; background:${m.copied ? t.ok : t.brand}; color:#fff; font-size:11px; font-weight:700; padding:6px 12px; border-radius:9px; cursor:pointer;">${esc(m.copyLabel)}</button>
+      </div>`;
+    const plainRow = (m) => `
+      <div style="display:flex; align-items:center; gap:12px; background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:11px 14px;">
+        ${this.avatarIcon(m.catIcon, m.catColor, 30)}
+        <span style="flex:1; min-width:0;">
+          <span style="display:block; font-weight:800; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(m.titulo)}</span>
+          <span style="display:block; font-size:11.5px; color:${t.textTertiary}; font-weight:700;">${esc(m.categoria)}</span>
+        </span>
+        <button data-click="${H(m.onCopy)}" style="flex-shrink:0; border:none; background:${m.copied ? t.ok : t.brand}; color:#fff; font-size:11px; font-weight:700; padding:6px 12px; border-radius:9px; cursor:pointer;">${esc(m.copyLabel)}</button>
+      </div>`;
+    const favTile = (m) => `
+      <button data-click="${H(m.onCopy)}" title="Clique para copiar" style="display:flex; align-items:center; gap:11px; border:1px solid ${m.copied ? t.ok : t.border}; background:${t.inputBg}; border-radius:${t.radiusMd}; padding:11px 13px; cursor:pointer; text-align:left;">
+        ${this.avatarIcon(m.catIcon, m.catColor, 28)}
+        <span style="flex:1; min-width:0;">
+          <span style="display:block; font-weight:800; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:${t.text};">${esc(m.titulo)}</span>
+          <span style="display:block; font-size:11px; color:${t.textTertiary}; font-weight:700;">${esc(m.categoria)}</span>
+        </span>
+        <span style="width:26px; height:26px; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; background:${m.copied ? t.ok : t.brand}; color:#fff;">${m.copied ? ic.check : ic.clipboard}</span>
+      </button>`;
+
+    return `
+    <main data-key="view-visaogeral" class="dp-view-enter" style="padding:22px 28px 60px; display:flex; flex-direction:column; gap:18px;">
+      <div style="background:${t.brandGradient}; border-radius:${t.radiusXl}; padding:24px 28px; color:#fff; display:flex; align-items:center; gap:20px; flex-wrap:wrap; box-shadow:${t.glow};">
+        <div style="flex:1; min-width:220px;">
+          <div style="font-family:${t.fontDisplay}; font-weight:800; font-size:22px; letter-spacing:-0.4px;">${esc(v.heroGreeting)}</div>
+          <div style="font-size:13.5px; opacity:.85; margin-top:4px;">Copie sua mensagem em segundos — favoritas e mais usadas estão a um clique.</div>
+        </div>
+        <div style="display:flex; gap:16px; flex-wrap:wrap;">
+          ${v.heroStats.map(h => `
+            <div style="text-align:center; background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.22); border-radius:14px; padding:10px 20px;">
+              <div style="font-family:${t.fontDisplay}; font-weight:800; font-size:23px; letter-spacing:-0.4px;">${h.value}</div>
+              <div style="font-size:10.5px; font-weight:800; letter-spacing:1px; opacity:.85;">${esc(h.label)}</div>
+            </div>`).join('')}
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:18px; align-items:start;">
+        <section style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusXl}; padding:22px; box-shadow:${t.shadowMd};">
+          ${panelHeader(ic.fire, 'Mais usadas', '#E8A10B26', '#E8A10B')}
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            ${v.mostUsedList.length ? v.mostUsedList.map(rankRow).join('') : `<div style="font-size:13px; color:${t.textTertiary};">Nenhuma mensagem usada ainda.</div>`}
+          </div>
+        </section>
+        <section style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusXl}; padding:22px; box-shadow:${t.shadowMd};">
+          ${panelHeader(ic.clock, 'Recentes', t.accentSoft, t.accent)}
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            ${v.hasRecent ? v.recentList.map(plainRow).join('') : `<div style="color:${t.textTertiary}; font-size:13px; text-align:center; border:1px dashed ${t.border}; border-radius:${t.radiusMd}; padding:20px;">Copie uma mensagem e ela aparece aqui.</div>`}
+          </div>
+        </section>
+      </div>
+
+      <section style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusXl}; padding:22px; box-shadow:${t.shadowMd};">
+        ${panelHeader(App.icons(t).star ? App.icons(t).star(true, '#8B5CF6') : '', 'Favoritas — copie com 1 clique', 'rgba(139,92,246,.14)', '#8B5CF6')}
+        <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px;">
+          ${v.hasFav ? v.favList.map(favTile).join('') : `<div style="grid-column:1/-1; color:${t.textTertiary}; font-size:13px; text-align:center; border:1px dashed ${t.border}; border-radius:${t.radiusMd}; padding:20px;">Marque mensagens com a estrela para vê-las aqui.</div>`}
+        </div>
+      </section>
+    </main>`;
   }
 
   viewAdmin(v, t, H) {
-    const cols = '140px 1fr 1fr 140px 90px 130px';
+    const cols = '150px 1.1fr 1.5fr 80px 150px';
     let content = '';
 
     if (v.isAdminMsgs) {
       content = `
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; gap:12px; flex-wrap:wrap;">
-          <div style="font-size:20px; font-weight:800;">Mensagens</div>
+          <div style="font-size:19px; font-weight:800; font-family:${t.fontDisplay};">Mensagens</div>
           <div style="display:flex; gap:10px; align-items:center;">
-            <input type="text" data-focus="adminSearch" placeholder="Buscar…" value="${esc(v.adminSearchQuery)}" data-input="${H(v.onAdminSearchChange)}" style="padding:9px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
-            <button data-click="${H(v.openCreateMsg)}" style="border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:8px; cursor:pointer;">+ Nova mensagem</button>
+            <input type="text" data-focus="adminSearch" placeholder="Buscar…" value="${esc(v.adminSearchQuery)}" data-input="${H(v.onAdminSearchChange)}" style="padding:9px 12px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
+            <button data-click="${H(v.openCreateMsg)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Nova mensagem</button>
           </div>
         </div>
         <div class="dp-table-scroll">
-          <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:14px; overflow:hidden; min-width:760px;">
-            <div style="display:grid; grid-template-columns:${cols}; gap:10px; padding:12px 16px; font-size:11px; font-weight:800; color:${t.textSecondary}; background:${t.pageBg}; text-transform:uppercase;">
-              <div>Categoria</div><div>Título</div><div>Conteúdo</div><div>Tags</div><div>Freq.</div><div>Ações</div>
+          <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; overflow:hidden; min-width:760px; box-shadow:${t.shadowMd};">
+            <div style="display:grid; grid-template-columns:${cols}; gap:12px; padding:13px 20px; font-size:11px; font-weight:800; color:${t.textTertiary}; letter-spacing:1px; text-transform:uppercase;">
+              <div>Categoria</div><div>Título</div><div>Conteúdo</div><div>Freq.</div><div style="text-align:right;">Ações</div>
             </div>
             ${v.adminMsgRows.map(row => `
-              <div data-key="${esc(row.id)}" style="display:grid; grid-template-columns:${cols}; gap:10px; padding:12px 16px; font-size:13px; border-top:1px solid ${t.border}; align-items:center;">
-                <div style="font-weight:700; color:${t.cyan};">${esc(row.categoria)}</div>
-                <div style="font-weight:700;">${esc(row.titulo)}</div>
-                <div style="color:${t.textSecondary}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(row.conteudo)}</div>
-                <div style="color:${t.textSecondary}; font-size:12px;">${esc(row.tagsLabel)}</div>
-                <div>${esc(row.frequencia)}</div>
-                <div style="display:flex; gap:6px;">
-                  <button data-click="${H(row.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:5px 9px; border-radius:6px; cursor:pointer;">Editar</button>
-                  <button data-click="${H(row.onDelete)}" style="border:none; background:#FEE2E2; color:#B91C1C; font-size:11px; font-weight:700; padding:5px 9px; border-radius:6px; cursor:pointer;">Excluir</button>
+              <div data-key="${esc(row.id)}" style="display:grid; grid-template-columns:${cols}; gap:12px; padding:12px 20px; font-size:13.5px; border-top:1px solid ${t.border}; align-items:center;">
+                <div style="font-weight:700; color:${t.accent};">${esc(row.categoria)}</div>
+                <div style="font-weight:800;">${esc(row.titulo)}</div>
+                <div style="color:${t.textSecondary}; font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(row.conteudo)}</div>
+                <div style="color:${t.textSecondary}; font-weight:700;">${esc(row.frequencia)}</div>
+                <div style="display:flex; gap:6px; justify-content:flex-end;">
+                  <button data-click="${H(row.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:6px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Editar</button>
+                  <button data-click="${H(row.onDelete)}" style="border:none; background:${t.dangerSoft}; color:${t.danger}; font-size:12px; font-weight:700; padding:6px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Excluir</button>
                 </div>
               </div>`).join('')}
           </div>
@@ -1099,67 +1327,67 @@ class App {
     } else if (v.isAdminCats) {
       content = `
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
-          <div style="font-size:20px; font-weight:800;">Categorias de situação</div>
-          <button data-click="${H(v.openCreateCat)}" style="border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:8px; cursor:pointer;">+ Nova categoria</button>
+          <div style="font-size:19px; font-weight:800; font-family:${t.fontDisplay};">Categorias de situação</div>
+          <button data-click="${H(v.openCreateCat)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Nova categoria</button>
         </div>
-        <div style="display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; flex-direction:column; gap:10px;">
           ${v.catRows.map(cat => `
-            <div data-key="${esc(cat.id)}" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:12px; padding:12px 16px;">
+            <div data-key="${esc(cat.id)}" class="dp-row-card" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:14px 18px; box-shadow:${t.shadowSm};">
               <div>
-                <div style="font-weight:700; font-size:14px;">${esc(cat.nome)}</div>
-                <div style="font-size:12px; color:${t.textSecondary};">${esc(cat.countLabel)}</div>
+                <div style="font-weight:800; font-size:14.5px;">${esc(cat.nome)}</div>
+                <div style="font-size:12px; color:${t.textTertiary};">${esc(cat.countLabel)}</div>
               </div>
               <div style="display:flex; gap:6px;">
-                <button data-click="${H(cat.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer;">Editar</button>
-                <button data-click="${H(cat.onDelete)}" style="border:none; background:#FEE2E2; color:#B91C1C; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer;">Excluir</button>
+                <button data-click="${H(cat.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:7px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Editar</button>
+                <button data-click="${H(cat.onDelete)}" style="border:none; background:${t.dangerSoft}; color:${t.danger}; font-size:12px; font-weight:700; padding:7px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Excluir</button>
               </div>
             </div>`).join('')}
         </div>`;
     } else if (v.isAdminAcessos) {
       content = `
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
-          <div style="font-size:20px; font-weight:800;">Acessos</div>
-          <button data-click="${H(v.openCreateAcesso)}" style="border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:8px; cursor:pointer;">+ Novo Acesso</button>
+          <div style="font-size:19px; font-weight:800; font-family:${t.fontDisplay};">Acessos</div>
+          <button data-click="${H(v.openCreateAcesso)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Novo Acesso</button>
         </div>
         <div style="display:flex; flex-direction:column; gap:12px;">
           ${v.acessoRows.map(a => `
-            <div data-key="${esc(a.id)}" class="dp-row-card" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:16px; padding:18px 20px; box-shadow:${t.shadowSm};">
+            <div data-key="${esc(a.id)}" class="dp-row-card" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:18px 20px; box-shadow:${t.shadowMd};">
               <div style="display:flex; align-items:center; gap:14px;">
                 ${this.avatarSquare(a.initial, a.cor, 40)}
                 <div>
                   <div style="font-weight:800; font-size:15px;">${esc(a.nome)}</div>
-                  <div style="font-size:12px; color:${t.textSecondary}; margin-top:2px;">${esc(a.statsLabel)}</div>
+                  <div style="font-size:12px; color:${t.textTertiary}; margin-top:2px;">${esc(a.statsLabel)}</div>
                 </div>
               </div>
               <div style="display:flex; align-items:center; gap:8px;">
-                <div style="font-size:11px; font-weight:800; padding:5px 12px; border-radius:999px; background:${a.statusBg}; color:${a.statusColor};">${esc(a.statusLabel)}</div>
-                <button data-click="${H(a.onUsers)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:7px 12px; border-radius:8px; cursor:pointer;">Usuários</button>
-                <button data-click="${H(a.onToggleStatus)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:7px 12px; border-radius:8px; cursor:pointer;">${esc(a.toggleLabel)}</button>
+                <div style="font-size:11px; font-weight:800; padding:6px 14px; border-radius:999px; background:${a.statusBg}; color:${a.statusColor};">${esc(a.statusLabel)}</div>
+                <button data-click="${H(a.onUsers)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:8px 14px; border-radius:${t.radiusSm}; cursor:pointer;">Usuários</button>
+                <button data-click="${H(a.onToggleStatus)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:8px 14px; border-radius:${t.radiusSm}; cursor:pointer;">${esc(a.toggleLabel)}</button>
               </div>
             </div>`).join('')}
         </div>`;
     } else if (v.isAdminSolicitacoes) {
       content = `
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
-          <div style="font-size:20px; font-weight:800;">Solicitações de Aprovação</div>
+          <div style="font-size:19px; font-weight:800; font-family:${t.fontDisplay};">Solicitações de Aprovação</div>
         </div>
         ${v.hasSolicitacoes ? `
         <div class="dp-table-scroll">
-          <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:14px; overflow:hidden; min-width:640px;">
-            <div style="display:grid; grid-template-columns:1fr 1fr 120px 180px 100px; gap:10px; padding:12px 16px; font-size:11px; font-weight:800; color:${t.textSecondary}; background:${t.pageBg}; text-transform:uppercase;">
+          <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; overflow:hidden; min-width:640px; box-shadow:${t.shadowMd};">
+            <div style="display:grid; grid-template-columns:1fr 1fr 120px 180px 100px; gap:10px; padding:13px 20px; font-size:11px; font-weight:800; color:${t.textTertiary}; letter-spacing:1px; text-transform:uppercase;">
               <div>Departamento</div><div>Usuário</div><div>Tipo</div><div>Data</div><div>Ações</div>
             </div>
             ${v.solicitacaoRows.map(row => `
-              <div data-key="${esc(row.id)}" style="display:grid; grid-template-columns:1fr 1fr 120px 180px 100px; gap:10px; padding:12px 16px; font-size:13px; border-top:1px solid ${t.border}; align-items:center;">
-                <div style="font-weight:700;">${esc(row.departamento)}</div>
+              <div data-key="${esc(row.id)}" style="display:grid; grid-template-columns:1fr 1fr 120px 180px 100px; gap:10px; padding:12px 20px; font-size:13.5px; border-top:1px solid ${t.border}; align-items:center;">
+                <div style="font-weight:800;">${esc(row.departamento)}</div>
                 <div>${esc(row.usuario)}</div>
                 <div style="color:${t.textSecondary};">${esc(row.tipoLabel)}</div>
-                <div style="color:${t.textSecondary}; font-size:12px;">${esc(row.dataLabel)}</div>
-                <div><button data-click="${H(row.onOpen)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer;">Analisar</button></div>
+                <div style="color:${t.textTertiary}; font-size:12px;">${esc(row.dataLabel)}</div>
+                <div><button data-click="${H(row.onOpen)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:6px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Analisar</button></div>
               </div>`).join('')}
           </div>
         </div>` : `
-        <div style="text-align:center; padding:60px 20px; background:${t.cardBg}; border:1px dashed ${t.border}; border-radius:16px;">
+        <div style="text-align:center; padding:60px 20px; background:${t.cardBg}; border:1px dashed ${t.border}; border-radius:${t.radiusLg};">
           <div style="font-size:16px; font-weight:800; color:${t.text};">Nenhuma solicitação pendente</div>
           <div style="font-size:13px; color:${t.textSecondary}; margin-top:6px;">Quando um usuário criar, editar ou pedir exclusão de uma mensagem, aparecerá aqui.</div>
         </div>`}`;
@@ -1172,20 +1400,18 @@ class App {
     const iconSolic = navIcon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 2 2 4-4"/>');
 
     return `
-    <div data-key="view-admin" class="dp-admin-layout dp-view-enter" style="max-width:1300px; margin:0 auto; padding:24px; display:flex; gap:24px; align-items:flex-start;">
-      <div class="dp-admin-sidebar" role="tablist" aria-label="Seções do painel administrativo" style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:16px; padding:14px; position:sticky; top:96px;">
-        <div role="button" tabindex="0" data-click="${H(v.goDashboard)}" style="font-size:13px; font-weight:700; color:${t.textSecondary}; padding:11px 14px; cursor:pointer; border-radius:999px;">← Voltar ao painel</div>
-        <div style="height:1px; background:${t.border}; margin:10px 4px;"></div>
+    <main data-key="view-admin" class="dp-admin-layout dp-view-enter" style="padding:22px 28px 60px; display:flex; gap:24px; align-items:flex-start;">
+      <div class="dp-admin-sidebar" role="tablist" aria-label="Seções do painel administrativo" style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:14px; position:sticky; top:88px;">
         <div role="tab" tabindex="0" aria-selected="${v.isAdminMsgs}" data-click="${H(v.setAdminTabMsgs)}" style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:999px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:6px; background:${v.tabMsgsBg}; color:${v.tabMsgsColor};">${iconMsgs}Mensagens</div>
         <div role="tab" tabindex="0" aria-selected="${v.isAdminCats}" data-click="${H(v.setAdminTabCats)}" style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:999px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:6px; background:${v.tabCatsBg}; color:${v.tabCatsColor};">${iconCats}Categorias</div>
         ${v.isSuperAdmin ? `<div role="tab" tabindex="0" aria-selected="${v.isAdminAcessos}" data-click="${H(v.setAdminTabAcessos)}" style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:999px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:6px; background:${v.tabAcessosBg}; color:${v.tabAcessosColor};">${iconAcessos}Acessos</div>` : ''}
         ${v.isSuperAdmin ? `<div role="tab" tabindex="0" aria-selected="${v.isAdminSolicitacoes}" data-click="${H(v.setAdminTabSolicitacoes)}" style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:999px; cursor:pointer; font-size:14px; font-weight:700; background:${v.tabSolicitacoesBg}; color:${v.tabSolicitacoesColor};">${iconSolic}${esc(v.solicitacoesTabLabel)}</div>` : ''}
       </div>
       <div style="flex:1; min-width:0;">
-        <div style="font-size:12px; font-weight:700; color:${t.textSecondary}; margin-bottom:14px;">Operando em: <span style="color:${t.cyan};">${esc(v.activeAcesso.nome)}</span></div>
+        <div style="font-size:12px; font-weight:700; color:${t.textTertiary}; margin-bottom:14px;">Operando em: <span style="color:${t.accent};">${esc(v.activeAcesso.nome)}</span></div>
         ${content}
       </div>
-    </div>`;
+    </main>`;
   }
 
   viewModals(v, t, H) {
@@ -1332,7 +1558,7 @@ class App {
           <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:20px; line-height:1.5;">${esc(v.confirm.message)}</div>
           <div style="display:flex; justify-content:flex-end; gap:10px;">
             <button data-click="${H(v.closeConfirm)}" style="padding:9px 16px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Cancelar</button>
-            <button data-click="${H(v.runConfirm)}" style="padding:9px 16px; border-radius:8px; border:none; background:#DC2626; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Confirmar</button>
+            <button data-click="${H(v.runConfirm)}" style="padding:9px 16px; border-radius:${t.radiusSm}; border:none; background:${t.danger}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Confirmar</button>
           </div>
         </div>
       </div>`;
@@ -1373,13 +1599,13 @@ class App {
             </div>
             <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
               <button data-click="${H(v.cancelReject)}" style="padding:9px 16px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Cancelar</button>
-              <button data-click="${H(v.confirmReject)}" style="padding:9px 16px; border-radius:8px; border:none; background:#DC2626; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Confirmar rejeição</button>
+              <button data-click="${H(v.confirmReject)}" style="padding:9px 16px; border-radius:${t.radiusSm}; border:none; background:${t.danger}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Confirmar rejeição</button>
             </div>
           ` : `
             <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
-              <button data-click="${H(v.closeSolicitacaoModal)}" style="padding:9px 16px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Fechar</button>
-              <button data-click="${H(v.startReject)}" style="padding:9px 16px; border-radius:8px; border:none; background:#FEE2E2; color:#B91C1C; font-size:13px; font-weight:700; cursor:pointer;">Rejeitar</button>
-              <button data-click="${H(v.aprovarViewing)}" style="padding:9px 16px; border-radius:8px; border:none; background:#16A34A; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Aprovar</button>
+              <button data-click="${H(v.closeSolicitacaoModal)}" style="padding:9px 16px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Fechar</button>
+              <button data-click="${H(v.startReject)}" style="padding:9px 16px; border-radius:${t.radiusSm}; border:none; background:${t.dangerSoft}; color:${t.danger}; font-size:13px; font-weight:700; cursor:pointer;">Rejeitar</button>
+              <button data-click="${H(v.aprovarViewing)}" style="padding:9px 16px; border-radius:${t.radiusSm}; border:none; background:${t.ok}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Aprovar</button>
             </div>
           `}
         </div>
@@ -1400,8 +1626,64 @@ class App {
       </div>`;
     }
 
+    if (v.showPreviewModal && v.previewingMsg) {
+      const m = v.previewingMsg;
+      out += `
+      <div role="presentation" data-click="${H(v.closePreview)}" style="position:fixed; inset:0; background:rgba(5,10,26,0.55); backdrop-filter:blur(5px); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
+        <div role="dialog" aria-modal="true" aria-label="${esc(m.titulo)}" data-click="${stay}" style="width:100%; max-width:560px; background:${t.modalSolidBg}; border-radius:${t.radiusXl}; padding:26px; animation:dp-modal-in .18s ease-out;">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+            ${this.avatarIcon(m.catIcon, m.catColor, 30)}
+            <span style="font-size:12.5px; font-weight:800; color:${t.textSecondary};">${esc(m.categoria)}</span>
+            <span style="flex:1;"></span>
+            <button data-click="${H(v.closePreview)}" style="border:0; background:${t.inputBg}; color:${t.textSecondary}; width:30px; height:30px; border-radius:${t.radiusSm}; cursor:pointer; font-size:15px; font-weight:700;">✕</button>
+          </div>
+          <h3 style="margin:4px 0 14px; font-size:19px; font-weight:700; letter-spacing:-0.3px; font-family:${t.fontDisplay};">${esc(m.titulo)}</h3>
+          <div style="background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:16px 18px; white-space:pre-wrap; font-size:14px; line-height:1.65; color:${t.text}; max-height:48vh; overflow:auto;">${esc(m.conteudo)}</div>
+          <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:18px;">
+            <button data-click="${H(v.closePreview)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-weight:700; font-size:13.5px; padding:10px 18px; border-radius:${t.radiusSm}; cursor:pointer;">Fechar</button>
+            <button data-click="${H(m.onCopy)}" style="display:flex; align-items:center; gap:7px; border:0; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; font-weight:800; font-size:13.5px; padding:10px 18px; cursor:pointer; box-shadow:${t.glow};">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copiar mensagem
+            </button>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    if (v.paletteOpen) {
+      out += `
+      <div role="presentation" data-click="${H(v.closePalette)}" style="position:fixed; inset:0; background:rgba(5,10,26,0.5); backdrop-filter:blur(6px); display:flex; justify-content:center; align-items:flex-start; z-index:120; padding:12vh 20px 20px;">
+        <div role="dialog" aria-modal="true" aria-label="Busca rápida" data-click="${stay}" style="width:100%; max-width:600px; background:${t.modalSolidBg}; border:1px solid ${t.border}; border-radius:${t.radiusXl}; box-shadow:${t.shadowLg}; overflow:hidden; animation:dp-modal-in .18s ease-out;">
+          <div style="display:flex; align-items:center; gap:12px; padding:16px 20px; border-bottom:1px solid ${t.border};">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="${t.textTertiary}" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <input data-ref="${H(v.paletteInputRef)}" data-focus="palette" value="${esc(v.paletteQuery)}" data-input="${H(v.onPaletteQueryChange)}" placeholder="Digite para buscar e Enter para copiar…" style="flex:1; border:0; background:transparent; color:${t.text}; font-size:15px; outline:none; font-family:inherit;" />
+            <span style="border:1px solid ${t.border}; background:${t.inputBg}; border-radius:6px; padding:2px 7px; font-size:11px; font-weight:700; color:${t.textSecondary};">Esc</span>
+          </div>
+          <div style="max-height:330px; overflow:auto; padding:8px;">
+            ${v.paletteRows.map(r => `
+              <div role="button" tabindex="0" data-click="${H(r.onPick)}" style="display:flex; align-items:center; gap:12px; padding:11px 14px; border-radius:${t.radiusSm}; cursor:pointer; background:${r.active ? t.accentSoft : 'transparent'};">
+                <span style="width:10px; height:10px; border-radius:50%; background:${r.catColor}; flex-shrink:0;"></span>
+                <span style="flex:1; min-width:0;"><span style="display:block; font-weight:800; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.titulo)}</span><span style="display:block; font-size:12px; color:${t.textTertiary};">${esc(r.categoria)}</span></span>
+                <span style="font-size:11px; font-weight:700; color:${t.accent}; opacity:${r.active ? 1 : 0};">↵ copiar</span>
+              </div>`).join('')}
+            ${v.paletteEmpty ? `<div style="padding:24px; text-align:center; color:${t.textTertiary}; font-size:14px;">Nada encontrado para "${esc(v.paletteQuery)}".</div>` : ''}
+          </div>
+          <div style="display:flex; gap:16px; padding:11px 20px; border-top:1px solid ${t.border}; font-size:11.5px; color:${t.textTertiary}; font-weight:600;">
+            <span><span style="border:1px solid ${t.border}; background:${t.inputBg}; border-radius:5px; padding:1px 6px;">↑↓</span> navegar</span>
+            <span><span style="border:1px solid ${t.border}; background:${t.inputBg}; border-radius:5px; padding:1px 6px;">↵</span> copiar</span>
+            <span><span style="border:1px solid ${t.border}; background:${t.inputBg}; border-radius:5px; padding:1px 6px;">Esc</span> fechar</span>
+          </div>
+        </div>
+      </div>`;
+    }
+
     if (v.toast.show) {
-      out += `<div role="status" aria-live="polite" style="position:fixed; bottom:24px; right:24px; z-index:200; background:${v.toast.bg}; color:#fff; padding:13px 20px; border-radius:10px; font-size:13px; font-weight:700; box-shadow:0 12px 30px -8px rgba(0,0,0,0.35); animation:dp-toast-in .2s ease-out;">${esc(v.toast.msg)}</div>`;
+      out += `
+      <div role="status" aria-live="polite" style="position:fixed; bottom:24px; right:24px; z-index:200; display:flex; flex-direction:column; gap:8px; background:${v.toast.bg}; color:${v.toast.ink || '#fff'}; border-radius:${t.radiusMd}; padding:13px 16px; box-shadow:0 12px 30px -8px rgba(0,0,0,0.35); animation:dp-toast-in .2s ease-out; max-width:min(400px,86vw);">
+        <div style="display:flex; align-items:center; gap:10px; font-weight:800; font-size:13.5px;">
+          <span style="width:20px; height:20px; border-radius:50%; background:${v.toast.type === 'error' ? 'rgba(255,255,255,.25)' : 'rgba(16,185,129,.9)'}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${v.toast.type === 'error' ? '!' : '✓'}</span>${esc(v.toast.msg)}
+        </div>
+        ${v.toast.body ? `<div style="white-space:pre-wrap; font-size:12.5px; line-height:1.55; font-weight:500; opacity:.85; max-height:200px; overflow:auto; border-top:1px solid rgba(128,140,170,.25); padding-top:8px;">${esc(v.toast.body)}</div>` : ''}
+      </div>`;
     }
 
     return out;
