@@ -50,6 +50,19 @@
     box-shadow: 0 14px 28px -16px rgba(17,31,63,0.22);
     border-color: #0E93D855 !important;
   }
+  .dp-table-row { transition: background .2s ease; }
+  .dp-table-row:hover { background: rgba(120,148,190,0.1); }
+  .dp-tooltip-target { position: relative; }
+  .dp-tooltip-target .dp-tooltip {
+    position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%) translateX(-4px);
+    background: #111F3F; color: #F2F7FD; font-size: 12px; font-weight: 700; white-space: nowrap;
+    padding: 6px 10px; border-radius: 8px; pointer-events: none; z-index: 60;
+    opacity: 0; transition: opacity .1s ease, transform .1s ease;
+    box-shadow: 0 8px 20px -8px rgba(0,0,0,0.4);
+  }
+  .dp-tooltip-target:hover .dp-tooltip, .dp-tooltip-target:focus-visible .dp-tooltip {
+    opacity: 1; transform: translateY(-50%) translateX(0);
+  }
   .dp-skeleton {
     background: linear-gradient(90deg, rgba(148,163,184,0.15) 25%, rgba(148,163,184,0.3) 37%, rgba(148,163,184,0.15) 63%);
     background-size: 600px 100%;
@@ -62,13 +75,8 @@
   @keyframes dp-fade-in { from { opacity: 0; } to { opacity: 1; } }
   .dp-view-enter { animation: dp-fade-in .18s ease-out; }
   .dp-table-scroll { overflow-x: auto; }
-  .dp-admin-sidebar { width: 236px; flex-shrink: 0; }
 
   @media (max-width: 720px) {
-    .dp-admin-layout { flex-direction: column !important; }
-    .dp-admin-sidebar { width: 100% !important; position: static !important; top: auto !important; display: flex !important; gap: 6px; overflow-x: auto; }
-    .dp-admin-sidebar > div { white-space: nowrap; margin-bottom: 0 !important; }
-
     .dp-app-shell { grid-template-columns: 1fr !important; }
     .dp-sidebar {
       position: static !important; height: auto !important; width: 100% !important;

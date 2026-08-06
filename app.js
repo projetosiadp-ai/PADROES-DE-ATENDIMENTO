@@ -100,6 +100,7 @@ class App {
       loadError: '',
       darkMode: false,
       sidebarCollapsed: false,
+      viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 1280,
       density: 'compact',
       currentUser: null,     // { user, profile } from api.getSession()
       profileId: null,
@@ -205,6 +206,14 @@ class App {
 
     this.render();
     this.bindDelegatedEvents();
+
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (this.state.viewportWidth !== window.innerWidth) this.setState({ viewportWidth: window.innerWidth });
+      }, 120);
+    });
 
     api.onAuthChange(async (session) => {
       if (!session) {
@@ -618,6 +627,7 @@ class App {
       adminTab: st.adminTab || 'mensagens',
       isAdminMsgs: (st.adminTab || 'mensagens') === 'mensagens', isAdminCats: st.adminTab === 'categorias', isAdminAcessos: st.adminTab === 'acessos',
       isAdminSolicitacoes: st.adminTab === 'solicitacoes',
+      adminMsgsNarrow: st.viewportWidth < 900, adminSolicNarrow: st.viewportWidth < 700,
       tabMsgsBg: (st.adminTab || 'mensagens') === 'mensagens' ? theme.navy : 'transparent', tabMsgsColor: (st.adminTab || 'mensagens') === 'mensagens' ? '#fff' : theme.text,
       tabCatsBg: st.adminTab === 'categorias' ? theme.navy : 'transparent', tabCatsColor: st.adminTab === 'categorias' ? '#fff' : theme.text,
       tabAcessosBg: st.adminTab === 'acessos' ? theme.navy : 'transparent', tabAcessosColor: st.adminTab === 'acessos' ? '#fff' : theme.text,
@@ -648,7 +658,7 @@ class App {
       onSearchChange: (e) => this.setState({ searchQuery: e.target.value }),
       shortcutLabel: /Mac|iPhone|iPod|iPad/i.test(navigator.platform || '') ? '⌘K' : 'Ctrl K',
 
-      darkModeIcon: st.darkMode ? '☀' : '☾',
+      darkModeIcon: App.icons(theme)[st.darkMode ? 'sun' : 'moon'],
       toggleDarkMode: () => { const val = !st.darkMode; this.setState({ darkMode: val }); try { localStorage.setItem('dp_darkmode', val ? '1' : '0'); } catch (e) {} },
 
       sidebarCollapsed: st.sidebarCollapsed,
@@ -1070,7 +1080,7 @@ class App {
 
     if (v.isApp) {
       const sidebarW = v.sidebarCollapsed ? '72px' : '262px';
-      body += `<div style="display:grid; grid-template-columns:${sidebarW} 1fr; min-height:100vh; align-items:start; transition:grid-template-columns .2s ease;" class="dp-app-shell">`
+      body += `<div style="display:grid; grid-template-columns:${sidebarW} 1fr; min-height:100vh; align-items:start; transition:grid-template-columns .15s cubic-bezier(0.4,0,0.2,1);" class="dp-app-shell">`
         + this.viewSidebar(v, t, H)
         + `<div style="min-width:0;">` + this.viewTopHeader(v, t, H);
       if (v.isLib) body += this.viewLibrary(v, t, H);
@@ -1086,23 +1096,27 @@ class App {
 
   viewSidebar(v, t, H) {
     const c = v.sidebarCollapsed;
+    const tip = (label) => c ? `<span class="dp-tooltip">${esc(label)}</span>` : '';
     const navIcon = (path) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">${path}</svg>`;
     const navItem = (icon, label, active, onClick, badge) => `
-      <div role="button" tabindex="0" data-click="${H(onClick)}" title="${c ? esc(label) : ''}" style="position:relative; display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:${c ? '10px' : '10px 12px'}; justify-content:${c ? 'center' : 'flex-start'}; font-size:13.5px; font-weight:800; cursor:pointer; transition:background .2s ease; background:${active ? t.accentSoft : 'transparent'}; color:${active ? t.accent : t.textSecondary}; margin-bottom:2px;">
+      <div role="button" tabindex="0" data-click="${H(onClick)}" aria-label="${esc(label)}" class="${c ? 'dp-tooltip-target' : ''}" style="position:relative; display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:${c ? '10px' : '10px 12px'}; justify-content:${c ? 'center' : 'flex-start'}; font-size:13.5px; font-weight:800; cursor:pointer; transition:background .15s cubic-bezier(0.4,0,0.2,1); background:${active ? t.accentSoft : 'transparent'}; color:${active ? t.accent : t.textSecondary}; margin-bottom:2px;">
         ${c ? '' : `<span style="width:3px; height:16px; border-radius:3px; background:${active ? t.accent : 'transparent'}; flex-shrink:0;"></span>`}${icon}${c ? '' : esc(label)}
         ${badge ? `<span style="${c ? 'position:absolute; top:2px; right:2px;' : 'margin-left:auto;'} background:${t.danger}; color:#fff; font-size:10px; font-weight:800; border-radius:999px; padding:2px 8px;">${badge}</span>` : ''}
+        ${tip(label)}
       </div>`;
     const catRow = (dot, label, count, active, onClick) => `
-      <div role="button" tabindex="0" data-click="${H(onClick)}" title="${c ? esc(label) : ''}" style="display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:${c ? '8px' : '8px 12px'}; justify-content:${c ? 'center' : 'flex-start'}; font-size:13px; font-weight:700; cursor:pointer; background:${active ? t.inputBg : 'transparent'}; color:${active ? t.text : t.textSecondary}; box-shadow:${active ? `inset 0 0 0 1px ${t.border2}` : 'none'}; margin-bottom:2px;">
+      <div role="button" tabindex="0" data-click="${H(onClick)}" aria-label="${esc(label)}" class="${c ? 'dp-tooltip-target' : ''}" style="position:relative; display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:${c ? '8px' : '8px 12px'}; justify-content:${c ? 'center' : 'flex-start'}; font-size:13px; font-weight:700; cursor:pointer; background:${active ? t.inputBg : 'transparent'}; color:${active ? t.text : t.textSecondary}; box-shadow:${active ? `inset 0 0 0 1px ${t.border2}` : 'none'}; margin-bottom:2px;">
         <span style="width:8px; height:8px; border-radius:50%; background:${dot}; flex-shrink:0;"></span>${c ? '' : `${esc(label)}<span style="margin-left:auto; font-size:11px; font-weight:700; color:${t.textTertiary};">${count}</span>`}
+        ${tip(label)}
       </div>`;
 
     return `
-    <aside class="dp-sidebar" style="position:sticky; top:0; height:100vh; width:${c ? '72px' : '262px'}; display:flex; flex-direction:column; gap:2px; background:${t.cardBg}; border-right:1px solid ${t.border}; padding:20px 14px 16px; overflow:auto; transition:width .2s ease, padding .2s ease;">
-      <div role="button" tabindex="0" data-click="${H(v.goBiblioteca)}" title="${c ? 'DentalPlus' : ''}" style="display:flex; flex-direction:column; align-items:${c ? 'center' : 'flex-start'}; gap:2px; padding:2px 8px 18px; cursor:pointer;">
+    <aside class="dp-sidebar" style="position:sticky; top:0; height:100vh; width:${c ? '72px' : '262px'}; display:flex; flex-direction:column; gap:2px; background:${t.cardBg}; border-right:1px solid ${t.border}; padding:20px 14px 16px; overflow:auto; transition:width .15s cubic-bezier(0.4,0,0.2,1), padding .15s cubic-bezier(0.4,0,0.2,1);">
+      <div role="button" tabindex="0" data-click="${H(v.goBiblioteca)}" aria-label="DentalPlus" class="${c ? 'dp-tooltip-target' : ''}" style="position:relative; display:flex; flex-direction:column; align-items:${c ? 'center' : 'flex-start'}; gap:2px; padding:2px 8px 18px; cursor:pointer;">
         ${c
           ? `<img src="assets/favicon.png" alt="DentalPlus" width="32" height="32" style="height:32px; width:32px; border-radius:9px;" />`
           : `<img src="${t.logoSrc}" alt="DentalPlus" width="160" height="26" style="height:24px; width:auto;" /><span style="font-size:11px; color:${t.textTertiary}; font-weight:700;">Padrões de atendimento</span>`}
+        ${tip('DentalPlus')}
       </div>
       ${navItem(navIcon('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'), 'Biblioteca', v.isLib, v.goBiblioteca)}
       ${navItem(navIcon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>'), 'Visão geral', v.isOver, v.goVisaoGeral)}
@@ -1112,12 +1126,13 @@ class App {
       ${v.categoriaChips.map(chip => catRow(chip.color, chip.nome, chip.count, chip.active, chip.onClick)).join('')}
       <div style="flex:1;"></div>
       <div style="border-top:1px solid ${t.border}; padding-top:12px; display:flex; flex-direction:column; gap:8px;">
-        <button class="dp-sidebar-collapse-btn" data-click="${H(v.toggleSidebarCollapsed)}" title="${c ? 'Expandir menu' : 'Recolher menu'}" style="display:flex; align-items:center; gap:10px; justify-content:${c ? 'center' : 'flex-start'}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer;">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; transform:rotate(${c ? '180deg' : '0deg'}); transition:transform .2s ease;"><path d="M15 18l-6-6 6-6"/></svg>${c ? '' : 'Recolher menu'}
+        <button class="dp-sidebar-collapse-btn${c ? ' dp-tooltip-target' : ''}" data-click="${H(v.toggleSidebarCollapsed)}" aria-label="${c ? 'Expandir menu' : 'Recolher menu'}" style="position:relative; display:flex; align-items:center; gap:10px; justify-content:${c ? 'center' : 'flex-start'}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; transform:rotate(${c ? '180deg' : '0deg'}); transition:transform .15s cubic-bezier(0.4,0,0.2,1);"><path d="M15 18l-6-6 6-6"/></svg>${c ? '' : 'Recolher menu'}
+          ${tip('Expandir menu')}
         </button>
-        <button data-click="${H(v.toggleDarkMode)}" title="${c ? 'Alternar tema' : ''}" style="display:flex; align-items:center; gap:10px; justify-content:${c ? 'center' : 'flex-start'}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer;">${v.darkModeIcon}${c ? '' : ' Alternar tema'}</button>
+        <button class="${c ? 'dp-tooltip-target' : ''}" data-click="${H(v.toggleDarkMode)}" aria-label="Alternar tema" style="position:relative; display:flex; align-items:center; gap:10px; justify-content:${c ? 'center' : 'flex-start'}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer;">${v.darkModeIcon}${c ? '' : ' Alternar tema'}${tip('Alternar tema')}</button>
         <div style="display:flex; align-items:center; gap:10px; padding:4px; flex-direction:${c ? 'column' : 'row'}; justify-content:${c ? 'center' : 'flex-start'};">
-          <div title="${c ? esc(v.currentUser.nome) : ''}" style="width:32px; height:32px; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${esc(v.currentUser.iniciais)}</div>
+          <div aria-label="${c ? esc(v.currentUser.nome) : ''}" class="${c ? 'dp-tooltip-target' : ''}" style="position:relative; width:32px; height:32px; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${esc(v.currentUser.iniciais)}${tip(v.currentUser.nome)}</div>
           ${c ? '' : `
           <div style="flex:1; min-width:0; line-height:1.15;">
             <div style="font-size:13px; font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(v.currentUser.nome)}</div>
@@ -1168,7 +1183,9 @@ class App {
       trash: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>`,
       fire: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3-3 4-3 8a4 4 0 0 0 8 0c1.5 1.5 2 3.5 2 5a7 7 0 1 1-14 0c0-4 3-6 4-8 1-2 1.5-3.5 3-5z"/></svg>`,
       clock: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>`,
-      search: `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>`
+      search: `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>`,
+      sun: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.5M12 19v2.5M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M2.5 12H5M19 12h2.5M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/></svg>`,
+      moon: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/></svg>`
     };
   }
 
@@ -1321,24 +1338,42 @@ class App {
 
   viewAdmin(v, t, H) {
     const cols = '150px 1.1fr 1.5fr 80px 150px';
+    const sectionGap = '18px';
+    const sectionHeader = (title, action) => `
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:${sectionGap}; gap:12px; flex-wrap:wrap;">
+          <div style="font-size:19px; font-weight:800; font-family:${t.fontDisplay};">${title}</div>
+          ${action || ''}
+        </div>`;
     let content = '';
 
     if (v.isAdminMsgs) {
-      content = `
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; gap:12px; flex-wrap:wrap;">
-          <div style="font-size:19px; font-weight:800; font-family:${t.fontDisplay};">Mensagens</div>
+      const msgCard = (row) => `
+        <div data-key="${esc(row.id)}" class="dp-row-card" style="display:flex; flex-direction:column; gap:8px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:14px 16px; box-shadow:${t.shadowSm};">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <div style="font-weight:700; color:${t.accent}; font-size:11.5px;">${esc(row.categoria)}</div>
+            <div style="color:${t.textTertiary}; font-size:11.5px; font-weight:700;">usada ${esc(row.frequencia)}x</div>
+          </div>
+          <div style="font-weight:800; font-size:14.5px;">${esc(row.titulo)}</div>
+          <div style="color:${t.textSecondary}; font-size:12.5px; line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${esc(row.conteudo)}</div>
+          <div style="display:flex; gap:6px; margin-top:2px;">
+            <button data-click="${H(row.onEdit)}" style="flex:1; border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:7px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Editar</button>
+            <button data-click="${H(row.onDelete)}" style="flex:1; border:none; background:${t.dangerSoft}; color:${t.danger}; font-size:12px; font-weight:700; padding:7px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Excluir</button>
+          </div>
+        </div>`;
+      content = sectionHeader('Mensagens', `
           <div style="display:flex; gap:10px; align-items:center;">
             <input type="text" data-focus="adminSearch" placeholder="Buscar…" value="${esc(v.adminSearchQuery)}" data-input="${H(v.onAdminSearchChange)}" style="padding:9px 12px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
             <button data-click="${H(v.openCreateMsg)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Nova mensagem</button>
-          </div>
-        </div>
+          </div>`);
+      content += v.adminMsgsNarrow ? `
+        <div style="display:flex; flex-direction:column; gap:10px;">${v.adminMsgRows.map(msgCard).join('')}</div>` : `
         <div class="dp-table-scroll">
-          <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; overflow:hidden; min-width:760px; box-shadow:${t.shadowMd};">
+          <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; overflow:hidden; box-shadow:${t.shadowMd};">
             <div style="display:grid; grid-template-columns:${cols}; gap:12px; padding:13px 20px; font-size:11px; font-weight:800; color:${t.textTertiary}; letter-spacing:1px; text-transform:uppercase;">
               <div>Categoria</div><div>Título</div><div>Conteúdo</div><div>Freq.</div><div style="text-align:right;">Ações</div>
             </div>
             ${v.adminMsgRows.map(row => `
-              <div data-key="${esc(row.id)}" style="display:grid; grid-template-columns:${cols}; gap:12px; padding:12px 20px; font-size:13.5px; border-top:1px solid ${t.border}; align-items:center;">
+              <div data-key="${esc(row.id)}" class="dp-table-row" style="display:grid; grid-template-columns:${cols}; gap:12px; padding:12px 20px; font-size:13.5px; border-top:1px solid ${t.border}; align-items:center;">
                 <div style="font-weight:700; color:${t.accent};">${esc(row.categoria)}</div>
                 <div style="font-weight:800;">${esc(row.titulo)}</div>
                 <div style="color:${t.textSecondary}; font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(row.conteudo)}</div>
@@ -1351,11 +1386,8 @@ class App {
           </div>
         </div>`;
     } else if (v.isAdminCats) {
-      content = `
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
-          <div style="font-size:19px; font-weight:800; font-family:${t.fontDisplay};">Categorias de situação</div>
-          <button data-click="${H(v.openCreateCat)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Nova categoria</button>
-        </div>
+      content = sectionHeader('Categorias de situação', `<button data-click="${H(v.openCreateCat)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Nova categoria</button>`);
+      content += `
         <div style="display:flex; flex-direction:column; gap:10px;">
           ${v.catRows.map(cat => `
             <div data-key="${esc(cat.id)}" class="dp-row-card" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:14px 18px; box-shadow:${t.shadowSm};">
@@ -1370,14 +1402,11 @@ class App {
             </div>`).join('')}
         </div>`;
     } else if (v.isAdminAcessos) {
-      content = `
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
-          <div style="font-size:19px; font-weight:800; font-family:${t.fontDisplay};">Acessos</div>
-          <button data-click="${H(v.openCreateAcesso)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Novo Acesso</button>
-        </div>
+      content = sectionHeader('Acessos', `<button data-click="${H(v.openCreateAcesso)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Novo Acesso</button>`);
+      content += `
         <div style="display:flex; flex-direction:column; gap:12px;">
           ${v.acessoRows.map(a => `
-            <div data-key="${esc(a.id)}" class="dp-row-card" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:18px 20px; box-shadow:${t.shadowMd};">
+            <div data-key="${esc(a.id)}" class="dp-row-card" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:18px 20px; box-shadow:${t.shadowMd};">
               <div style="display:flex; align-items:center; gap:14px;">
                 ${this.avatarSquare(a.initial, a.cor, 40)}
                 <div>
@@ -1385,7 +1414,7 @@ class App {
                   <div style="font-size:12px; color:${t.textTertiary}; margin-top:2px;">${esc(a.statsLabel)}</div>
                 </div>
               </div>
-              <div style="display:flex; align-items:center; gap:8px;">
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                 <div style="font-size:11px; font-weight:800; padding:6px 14px; border-radius:999px; background:${a.statusBg}; color:${a.statusColor};">${esc(a.statusLabel)}</div>
                 <button data-click="${H(a.onUsers)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:8px 14px; border-radius:${t.radiusSm}; cursor:pointer;">Usuários</button>
                 <button data-click="${H(a.onToggleStatus)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:8px 14px; border-radius:${t.radiusSm}; cursor:pointer;">${esc(a.toggleLabel)}</button>
@@ -1393,18 +1422,23 @@ class App {
             </div>`).join('')}
         </div>`;
     } else if (v.isAdminSolicitacoes) {
-      content = `
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
-          <div style="font-size:19px; font-weight:800; font-family:${t.fontDisplay};">Solicitações de Aprovação</div>
-        </div>
-        ${v.hasSolicitacoes ? `
+      const solicCard = (row) => `
+        <div data-key="${esc(row.id)}" class="dp-row-card" style="display:flex; flex-direction:column; gap:6px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:14px 16px; box-shadow:${t.shadowSm};">
+          <div style="font-weight:800; font-size:14px;">${esc(row.departamento)}</div>
+          <div style="color:${t.textSecondary}; font-size:12.5px;">${esc(row.usuario)} · ${esc(row.tipoLabel)}</div>
+          <div style="color:${t.textTertiary}; font-size:11.5px;">${esc(row.dataLabel)}</div>
+          <button data-click="${H(row.onOpen)}" style="margin-top:4px; border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:7px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Analisar</button>
+        </div>`;
+      content = sectionHeader('Solicitações de Aprovação');
+      content += v.hasSolicitacoes ? (v.adminSolicNarrow ? `
+        <div style="display:flex; flex-direction:column; gap:10px;">${v.solicitacaoRows.map(solicCard).join('')}</div>` : `
         <div class="dp-table-scroll">
-          <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; overflow:hidden; min-width:640px; box-shadow:${t.shadowMd};">
+          <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; overflow:hidden; box-shadow:${t.shadowMd};">
             <div style="display:grid; grid-template-columns:1fr 1fr 120px 180px 100px; gap:10px; padding:13px 20px; font-size:11px; font-weight:800; color:${t.textTertiary}; letter-spacing:1px; text-transform:uppercase;">
               <div>Departamento</div><div>Usuário</div><div>Tipo</div><div>Data</div><div>Ações</div>
             </div>
             ${v.solicitacaoRows.map(row => `
-              <div data-key="${esc(row.id)}" style="display:grid; grid-template-columns:1fr 1fr 120px 180px 100px; gap:10px; padding:12px 20px; font-size:13.5px; border-top:1px solid ${t.border}; align-items:center;">
+              <div data-key="${esc(row.id)}" class="dp-table-row" style="display:grid; grid-template-columns:1fr 1fr 120px 180px 100px; gap:10px; padding:12px 20px; font-size:13.5px; border-top:1px solid ${t.border}; align-items:center;">
                 <div style="font-weight:800;">${esc(row.departamento)}</div>
                 <div>${esc(row.usuario)}</div>
                 <div style="color:${t.textSecondary};">${esc(row.tipoLabel)}</div>
@@ -1412,11 +1446,11 @@ class App {
                 <div><button data-click="${H(row.onOpen)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:6px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Analisar</button></div>
               </div>`).join('')}
           </div>
-        </div>` : `
+        </div>`) : `
         <div style="text-align:center; padding:60px 20px; background:${t.cardBg}; border:1px dashed ${t.border}; border-radius:${t.radiusLg};">
           <div style="font-size:16px; font-weight:800; color:${t.text};">Nenhuma solicitação pendente</div>
           <div style="font-size:13px; color:${t.textSecondary}; margin-top:6px;">Quando um usuário criar, editar ou pedir exclusão de uma mensagem, aparecerá aqui.</div>
-        </div>`}`;
+        </div>`;
     }
 
     const navIcon = (path) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">${path}</svg>`;
@@ -1424,19 +1458,24 @@ class App {
     const iconCats = navIcon('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>');
     const iconAcessos = navIcon('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>');
     const iconSolic = navIcon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 2 2 4-4"/>');
+    const tabPill = (icon, label, active, onClick, bg, color, badge) => `
+        <div role="tab" tabindex="0" aria-selected="${active}" data-click="${H(onClick)}" style="display:flex; align-items:center; gap:8px; padding:10px 16px; border-radius:999px; cursor:pointer; font-size:13.5px; font-weight:700; background:${bg}; color:${color}; transition:background .2s ease, color .2s ease; white-space:nowrap;">
+          ${icon}${esc(label)}
+          ${badge ? `<span style="background:${t.danger}; color:#fff; font-size:10px; font-weight:800; border-radius:999px; padding:2px 7px;">${badge}</span>` : ''}
+        </div>`;
 
     return `
-    <main data-key="view-admin" class="dp-admin-layout dp-view-enter" style="padding:22px 28px 60px; display:flex; gap:24px; align-items:flex-start;">
-      <div class="dp-admin-sidebar" role="tablist" aria-label="Seções do painel administrativo" style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:14px; position:sticky; top:88px;">
-        <div role="tab" tabindex="0" aria-selected="${v.isAdminMsgs}" data-click="${H(v.setAdminTabMsgs)}" style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:999px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:6px; background:${v.tabMsgsBg}; color:${v.tabMsgsColor};">${iconMsgs}Mensagens</div>
-        <div role="tab" tabindex="0" aria-selected="${v.isAdminCats}" data-click="${H(v.setAdminTabCats)}" style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:999px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:6px; background:${v.tabCatsBg}; color:${v.tabCatsColor};">${iconCats}Categorias</div>
-        ${v.isSuperAdmin ? `<div role="tab" tabindex="0" aria-selected="${v.isAdminAcessos}" data-click="${H(v.setAdminTabAcessos)}" style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:999px; cursor:pointer; font-size:14px; font-weight:700; margin-bottom:6px; background:${v.tabAcessosBg}; color:${v.tabAcessosColor};">${iconAcessos}Acessos</div>` : ''}
-        ${v.isSuperAdmin ? `<div role="tab" tabindex="0" aria-selected="${v.isAdminSolicitacoes}" data-click="${H(v.setAdminTabSolicitacoes)}" style="display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:999px; cursor:pointer; font-size:14px; font-weight:700; background:${v.tabSolicitacoesBg}; color:${v.tabSolicitacoesColor};">${iconSolic}${esc(v.solicitacoesTabLabel)}</div>` : ''}
+    <main data-key="view-admin" class="dp-admin-layout dp-view-enter" style="padding:22px 28px 60px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:10px 14px; margin-bottom:20px; box-shadow:${t.shadowSm};">
+        <div role="tablist" aria-label="Seções do painel administrativo" style="display:flex; gap:6px; flex-wrap:wrap;">
+          ${tabPill(iconMsgs, 'Mensagens', v.isAdminMsgs, v.setAdminTabMsgs, v.tabMsgsBg, v.tabMsgsColor)}
+          ${tabPill(iconCats, 'Categorias', v.isAdminCats, v.setAdminTabCats, v.tabCatsBg, v.tabCatsColor)}
+          ${v.isSuperAdmin ? tabPill(iconAcessos, 'Acessos', v.isAdminAcessos, v.setAdminTabAcessos, v.tabAcessosBg, v.tabAcessosColor) : ''}
+          ${v.isSuperAdmin ? tabPill(iconSolic, v.solicitacoesTabLabel, v.isAdminSolicitacoes, v.setAdminTabSolicitacoes, v.tabSolicitacoesBg, v.tabSolicitacoesColor, v.isSuperAdmin && v.solicitacoesCount > 0 ? v.solicitacoesCount : null) : ''}
+        </div>
+        <div style="font-size:12px; font-weight:700; color:${t.textTertiary}; white-space:nowrap;">Operando em: <span style="color:${t.accent};">${esc(v.activeAcesso.nome)}</span></div>
       </div>
-      <div style="flex:1; min-width:0;">
-        <div style="font-size:12px; font-weight:700; color:${t.textTertiary}; margin-bottom:14px;">Operando em: <span style="color:${t.accent};">${esc(v.activeAcesso.nome)}</span></div>
-        ${content}
-      </div>
+      ${content}
     </main>`;
   }
 
