@@ -99,6 +99,7 @@ class App {
       loading: true,
       loadError: '',
       darkMode: false,
+      sidebarCollapsed: false,
       density: 'compact',
       currentUser: null,     // { user, profile } from api.getSession()
       profileId: null,
@@ -107,6 +108,7 @@ class App {
       adminSearchQuery: '',
       categoryFilter: null,
       copiedId: null,
+      expandedCardIds: new Set(),
       librarySort: 'relevance',
       libraryViewMode: 'grid',
       showPreviewModal: false, previewingMsgId: null,
@@ -198,6 +200,7 @@ class App {
   async mount() {
     try {
       const dm = localStorage.getItem('dp_darkmode'); if (dm) this.state.darkMode = dm === '1';
+      const sc = localStorage.getItem('dp_sidebar_collapsed'); if (sc) this.state.sidebarCollapsed = sc === '1';
     } catch (e) {}
 
     this.render();
@@ -205,8 +208,8 @@ class App {
 
     api.onAuthChange(async (session) => {
       if (!session) {
-        const { darkMode, density } = this.state;
-        this.setState({ ...this.initialState(), darkMode, density, loading: false });
+        const { darkMode, density, sidebarCollapsed } = this.state;
+        this.setState({ ...this.initialState(), darkMode, density, sidebarCollapsed, loading: false });
         return;
       }
       await this.refreshAppData(session);
@@ -331,17 +334,17 @@ class App {
       // Legacy aliases kept so every existing call site keeps working —
       // only the underlying values change for the redesign.
       navy: dark ? '#2B62D6' : '#16336E', cyan: dark ? '#4CC3FF' : '#0E93D8',
-      pageBg: dark ? '#080F22' : '#EEF2F9',
-      cardBg: dark ? '#101B38' : '#FFFFFF',
-      modalSolidBg: dark ? '#101B38' : '#FFFFFF',
-      chipBg: dark ? '#0C152E' : '#F1F5FB',
-      chipBgHover: dark ? '#16234a' : '#e4ebf6',
-      logoGlow: dark ? 'filter: drop-shadow(0 0 2px rgba(255,255,255,0.85)) drop-shadow(0 0 5px rgba(255,255,255,0.45));' : '',
-      inputBg: dark ? '#0C152E' : '#F1F5FB',
-      text: dark ? '#E9EFFB' : '#111F3F',
+      pageBg: dark ? '#0B1428' : '#EEF2F9',
+      cardBg: dark ? '#141F3D' : '#FFFFFF',
+      modalSolidBg: dark ? '#1A2748' : '#FFFFFF',
+      chipBg: dark ? '#141F3D' : '#F1F5FB',
+      chipBgHover: dark ? '#1E2C52' : '#e4ebf6',
+      logoSrc: dark ? 'assets/dentalplus-logo-dark.png' : 'assets/dentalplus-logo.png',
+      inputBg: dark ? '#141F3D' : '#F1F5FB',
+      text: dark ? '#DCE4F5' : '#111F3F',
       textSecondary: dark ? '#A3B3D4' : '#54678C',
       textTertiary: dark ? '#5F7199' : '#93A6C4',
-      border: dark ? '#213155' : '#DDE6F2',
+      border: dark ? '#243456' : '#DDE6F2',
       border2: dark ? '#2C3F6B' : '#CBD9EA',
       radiusSm: '12px',
       radiusMd: '14px',
@@ -353,13 +356,13 @@ class App {
       glassEffect: 'backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);',
 
       // New tokens for the redesign.
-      panel: dark ? 'rgba(13,22,45,0.75)' : 'rgba(255,255,255,0.75)',
+      panel: dark ? 'rgba(20,31,61,0.75)' : 'rgba(255,255,255,0.75)',
       accent: dark ? '#4CC3FF' : '#0E93D8',
       accentSoft: dark ? 'rgba(76,195,255,0.13)' : 'rgba(14,147,216,0.11)',
       brand: dark ? '#2B62D6' : '#16336E',
       brand2: dark ? '#3A74EA' : '#1E4290',
       brandGradient: dark ? 'linear-gradient(135deg,#3A74EA,#39B5F5)' : 'linear-gradient(135deg,#1E4290,#0E93D8)',
-      glow: dark ? '0 8px 26px -8px rgba(57,181,245,0.35)' : '0 8px 24px -8px rgba(14,147,216,0.45)',
+      glow: dark ? '0 8px 26px -8px rgba(57,181,245,0.22)' : '0 8px 24px -8px rgba(14,147,216,0.45)',
       ok: dark ? '#34D399' : '#0E9F6E',
       okSoft: dark ? 'rgba(52,211,153,0.13)' : 'rgba(16,185,129,0.13)',
       danger: dark ? '#FF7B7B' : '#D64545',
@@ -481,16 +484,24 @@ class App {
         .catch(e => this.showToast(e.message, 'error'));
     };
     const openPreview = (msg) => this.setState({ showPreviewModal: true, previewingMsgId: msg.id });
+    const toggleExpand = (id) => {
+      const next = new Set(st.expandedCardIds);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      this.setState({ expandedCardIds: next });
+    };
 
     const maxFrequencia = Math.max(1, ...acessoMsgs.map(m => m.frequencia));
     const buildCard = (m) => {
       const isFav = st.favoriteIds.includes(m.id);
+      const isLong = m.conteudo.length > 130 || (m.conteudo.match(/\n/g) || []).length >= 3;
+      const isExpanded = st.expandedCardIds.has(m.id);
       return {
         id: m.id, categoria: m.categoria,
         catColor: this.categoryColor(m.categoria),
         catIcon: this.categoryIcon(m.categoria),
         titleSegments: this.titleSegments(m.titulo, st.searchQuery),
         displayContent: m.conteudo,
+        isLong, isExpanded, onToggleExpand: () => toggleExpand(m.id),
         heatWidth: Math.round(100 * m.frequencia / maxFrequencia),
         tagChips: m.tags.map(tag => ({ label: tag, onClick: () => this.setState({ searchQuery: tag }) })),
         frequencia: m.frequencia,
@@ -639,6 +650,9 @@ class App {
 
       darkModeIcon: st.darkMode ? '☀' : '☾',
       toggleDarkMode: () => { const val = !st.darkMode; this.setState({ darkMode: val }); try { localStorage.setItem('dp_darkmode', val ? '1' : '0'); } catch (e) {} },
+
+      sidebarCollapsed: st.sidebarCollapsed,
+      toggleSidebarCollapsed: () => { const val = !st.sidebarCollapsed; this.setState({ sidebarCollapsed: val }); try { localStorage.setItem('dp_sidebar_collapsed', val ? '1' : '0'); } catch (e) {} },
 
       chipAllActive: !st.categoryFilter, chipAllCount: acessoMsgs.length,
       setCategoryAll: () => this.setState({ categoryFilter: null }),
@@ -1002,7 +1016,7 @@ class App {
       <div style="min-height:100vh; background:${v.theme.pageBg};">
         <div style="padding:14px 24px; border-bottom:1px solid ${v.theme.border}; background:${v.theme.cardBg};">
           <div style="max-width:1400px; margin:0 auto; display:flex; align-items:center; gap:20px;">
-            <img src="assets/dentalplus-logo.png" alt="DentalPlus" style="height:26px; width:auto; opacity:.5; ${v.theme.logoGlow}" />
+            <img src="${v.theme.logoSrc}" alt="DentalPlus" style="height:26px; width:auto; opacity:.5;" />
             ${skel('1px', '26px')}
             ${skel('220px', '18px')}
             ${skel('320px', '38px', 'margin-left:auto; border-radius:12px;')}
@@ -1029,7 +1043,7 @@ class App {
         <div style="position:absolute; width:420px; height:420px; border-radius:50%; background:${t.accentSoft}; filter:blur(90px); bottom:-140px; left:-100px;"></div>
         <div style="position:relative; width:100%; max-width:420px; background:${t.panel}; ${t.glassEffect} border:1px solid ${t.border}; border-radius:${t.radiusXl}; padding:40px 36px; box-shadow:${t.shadowMd};">
           <div style="display:flex; justify-content:center; margin-bottom:24px;">
-            <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="309" height="52" style="height:48px; width:auto; ${t.logoGlow}" />
+            <img src="${t.logoSrc}" alt="DentalPlus" width="309" height="52" style="height:48px; width:auto;" />
           </div>
           <div style="text-align:center; margin-bottom:28px;">
             <div style="font-size:19px; font-weight:800; color:${t.text}; font-family:${t.fontDisplay};">Padrões de atendimento</div>
@@ -1055,7 +1069,8 @@ class App {
     }
 
     if (v.isApp) {
-      body += `<div style="display:grid; grid-template-columns:262px 1fr; min-height:100vh; align-items:start;" class="dp-app-shell">`
+      const sidebarW = v.sidebarCollapsed ? '72px' : '262px';
+      body += `<div style="display:grid; grid-template-columns:${sidebarW} 1fr; min-height:100vh; align-items:start; transition:grid-template-columns .2s ease;" class="dp-app-shell">`
         + this.viewSidebar(v, t, H)
         + `<div style="min-width:0;">` + this.viewTopHeader(v, t, H);
       if (v.isLib) body += this.viewLibrary(v, t, H);
@@ -1070,39 +1085,44 @@ class App {
   }
 
   viewSidebar(v, t, H) {
+    const c = v.sidebarCollapsed;
     const navIcon = (path) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">${path}</svg>`;
     const navItem = (icon, label, active, onClick, badge) => `
-      <div role="button" tabindex="0" data-click="${H(onClick)}" style="display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:10px 12px; font-size:13.5px; font-weight:800; cursor:pointer; transition:background .15s; background:${active ? t.accentSoft : 'transparent'}; color:${active ? t.accent : t.textSecondary}; margin-bottom:2px;">
-        <span style="width:3px; height:16px; border-radius:3px; background:${active ? t.accent : 'transparent'}; flex-shrink:0;"></span>${icon}${esc(label)}
-        ${badge ? `<span style="margin-left:auto; background:${t.danger}; color:#fff; font-size:10px; font-weight:800; border-radius:999px; padding:2px 8px;">${badge}</span>` : ''}
+      <div role="button" tabindex="0" data-click="${H(onClick)}" title="${c ? esc(label) : ''}" style="position:relative; display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:${c ? '10px' : '10px 12px'}; justify-content:${c ? 'center' : 'flex-start'}; font-size:13.5px; font-weight:800; cursor:pointer; transition:background .2s ease; background:${active ? t.accentSoft : 'transparent'}; color:${active ? t.accent : t.textSecondary}; margin-bottom:2px;">
+        ${c ? '' : `<span style="width:3px; height:16px; border-radius:3px; background:${active ? t.accent : 'transparent'}; flex-shrink:0;"></span>`}${icon}${c ? '' : esc(label)}
+        ${badge ? `<span style="${c ? 'position:absolute; top:2px; right:2px;' : 'margin-left:auto;'} background:${t.danger}; color:#fff; font-size:10px; font-weight:800; border-radius:999px; padding:2px 8px;">${badge}</span>` : ''}
+      </div>`;
+    const catRow = (dot, label, count, active, onClick) => `
+      <div role="button" tabindex="0" data-click="${H(onClick)}" title="${c ? esc(label) : ''}" style="display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:${c ? '8px' : '8px 12px'}; justify-content:${c ? 'center' : 'flex-start'}; font-size:13px; font-weight:700; cursor:pointer; background:${active ? t.inputBg : 'transparent'}; color:${active ? t.text : t.textSecondary}; box-shadow:${active ? `inset 0 0 0 1px ${t.border2}` : 'none'}; margin-bottom:2px;">
+        <span style="width:8px; height:8px; border-radius:50%; background:${dot}; flex-shrink:0;"></span>${c ? '' : `${esc(label)}<span style="margin-left:auto; font-size:11px; font-weight:700; color:${t.textTertiary};">${count}</span>`}
       </div>`;
 
     return `
-    <aside class="dp-sidebar" style="position:sticky; top:0; height:100vh; display:flex; flex-direction:column; gap:2px; background:${t.cardBg}; border-right:1px solid ${t.border}; padding:20px 14px 16px; overflow:auto;">
-      <div role="button" tabindex="0" data-click="${H(v.goBiblioteca)}" style="display:flex; flex-direction:column; gap:2px; padding:2px 8px 18px; cursor:pointer;">
-        <img src="assets/dentalplus-logo.png" alt="DentalPlus" width="160" height="26" style="height:24px; width:auto; ${t.logoGlow}" />
-        <span style="font-size:11px; color:${t.textTertiary}; font-weight:700;">Padrões de atendimento</span>
+    <aside class="dp-sidebar" style="position:sticky; top:0; height:100vh; width:${c ? '72px' : '262px'}; display:flex; flex-direction:column; gap:2px; background:${t.cardBg}; border-right:1px solid ${t.border}; padding:20px 14px 16px; overflow:auto; transition:width .2s ease, padding .2s ease;">
+      <div role="button" tabindex="0" data-click="${H(v.goBiblioteca)}" title="${c ? 'DentalPlus' : ''}" style="display:flex; flex-direction:column; align-items:${c ? 'center' : 'flex-start'}; gap:2px; padding:2px 8px 18px; cursor:pointer;">
+        ${c
+          ? `<img src="assets/favicon.png" alt="DentalPlus" width="32" height="32" style="height:32px; width:32px; border-radius:9px;" />`
+          : `<img src="${t.logoSrc}" alt="DentalPlus" width="160" height="26" style="height:24px; width:auto;" /><span style="font-size:11px; color:${t.textTertiary}; font-weight:700;">Padrões de atendimento</span>`}
       </div>
       ${navItem(navIcon('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'), 'Biblioteca', v.isLib, v.goBiblioteca)}
       ${navItem(navIcon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>'), 'Visão geral', v.isOver, v.goVisaoGeral)}
       ${v.isAdminNow ? navItem(navIcon('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'), 'Administração', v.isAdminView, v.goAdmin, v.isSuperAdmin && v.solicitacoesCount > 0 ? v.solicitacoesCount : null) : ''}
-      <div style="font-size:10.5px; font-weight:800; letter-spacing:1.4px; color:${t.textTertiary}; padding:18px 10px 8px;">CATEGORIAS</div>
-      <div role="button" tabindex="0" data-click="${H(v.setCategoryAll)}" style="display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:8px 12px; font-size:13px; font-weight:700; cursor:pointer; background:${v.chipAllActive ? t.inputBg : 'transparent'}; color:${v.chipAllActive ? t.text : t.textSecondary}; box-shadow:${v.chipAllActive ? `inset 0 0 0 1px ${t.border2}` : 'none'}; margin-bottom:2px;">
-        <span style="width:8px; height:8px; border-radius:50%; background:${t.textTertiary}; flex-shrink:0;"></span>Todas<span style="margin-left:auto; font-size:11px; font-weight:700; color:${t.textTertiary};">${v.chipAllCount}</span>
-      </div>
-      ${v.categoriaChips.map(chip => `
-        <div role="button" tabindex="0" data-click="${H(chip.onClick)}" style="display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:8px 12px; font-size:13px; font-weight:700; cursor:pointer; background:${chip.active ? t.inputBg : 'transparent'}; color:${chip.active ? t.text : t.textSecondary}; box-shadow:${chip.active ? `inset 0 0 0 1px ${t.border2}` : 'none'}; margin-bottom:2px;">
-          <span style="width:8px; height:8px; border-radius:50%; background:${chip.color}; flex-shrink:0;"></span>${esc(chip.nome)}<span style="margin-left:auto; font-size:11px; font-weight:700; color:${t.textTertiary};">${chip.count}</span>
-        </div>`).join('')}
+      ${c ? '' : `<div style="font-size:10.5px; font-weight:800; letter-spacing:1.4px; color:${t.textTertiary}; padding:18px 10px 8px;">CATEGORIAS</div>`}
+      ${catRow(t.textTertiary, 'Todas', v.chipAllCount, v.chipAllActive, v.setCategoryAll)}
+      ${v.categoriaChips.map(chip => catRow(chip.color, chip.nome, chip.count, chip.active, chip.onClick)).join('')}
       <div style="flex:1;"></div>
       <div style="border-top:1px solid ${t.border}; padding-top:12px; display:flex; flex-direction:column; gap:8px;">
-        <button data-click="${H(v.toggleDarkMode)}" style="display:flex; align-items:center; gap:10px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer;">${v.darkModeIcon} Alternar tema</button>
-        <div style="display:flex; align-items:center; gap:10px; padding:4px;">
-          <div style="width:32px; height:32px; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${esc(v.currentUser.iniciais)}</div>
+        <button class="dp-sidebar-collapse-btn" data-click="${H(v.toggleSidebarCollapsed)}" title="${c ? 'Expandir menu' : 'Recolher menu'}" style="display:flex; align-items:center; gap:10px; justify-content:${c ? 'center' : 'flex-start'}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; transform:rotate(${c ? '180deg' : '0deg'}); transition:transform .2s ease;"><path d="M15 18l-6-6 6-6"/></svg>${c ? '' : 'Recolher menu'}
+        </button>
+        <button data-click="${H(v.toggleDarkMode)}" title="${c ? 'Alternar tema' : ''}" style="display:flex; align-items:center; gap:10px; justify-content:${c ? 'center' : 'flex-start'}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer;">${v.darkModeIcon}${c ? '' : ' Alternar tema'}</button>
+        <div style="display:flex; align-items:center; gap:10px; padding:4px; flex-direction:${c ? 'column' : 'row'}; justify-content:${c ? 'center' : 'flex-start'};">
+          <div title="${c ? esc(v.currentUser.nome) : ''}" style="width:32px; height:32px; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${esc(v.currentUser.iniciais)}</div>
+          ${c ? '' : `
           <div style="flex:1; min-width:0; line-height:1.15;">
             <div style="font-size:13px; font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(v.currentUser.nome)}</div>
             <div style="font-size:11px; color:${t.textTertiary};">${esc(v.currentUser.perfilLabel)}</div>
-          </div>
+          </div>`}
           <button data-click="${H(v.logout)}" title="Sair" style="border:0; background:transparent; color:${t.textTertiary}; cursor:pointer; padding:6px; border-radius:${t.radiusSm}; display:flex;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
           </button>
@@ -1167,7 +1187,10 @@ class App {
           <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; line-height:1; display:flex;">${ic.star(m.isFav)}</button>
         </div>
         <div style="font-size:15.5px; font-weight:700; color:${t.text}; letter-spacing:-0.2px;">${m.titleSegments.map(seg => `<span style="${seg.style}">${esc(seg.text)}</span>`).join('')}</div>
-        <div style="font-size:13.5px; color:${t.textSecondary}; line-height:1.55; white-space:pre-line; word-break:break-word; overflow-wrap:break-word; max-width:100%; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;">${esc(m.displayContent)}</div>
+        <div>
+          <div style="font-size:13.5px; color:${t.textSecondary}; line-height:1.55; white-space:pre-line; word-break:break-word; overflow-wrap:break-word; max-width:100%; overflow:hidden; max-height:${m.isExpanded ? '2000px' : '63px'}; transition:max-height .25s ease;">${esc(m.displayContent)}</div>
+          ${m.isLong ? `<button data-click="${H(m.onToggleExpand)}" style="border:0; background:transparent; color:${t.accent}; font-size:12px; font-weight:800; cursor:pointer; padding:4px 0 0; text-align:left;">${m.isExpanded ? 'ver menos' : 'ver mais'}</button>` : ''}
+        </div>
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
           ${m.tagChips.map(tag => `<button data-click="${H(tag.onClick)}" style="border:0; background:${t.accentSoft}; color:${t.accent}; font-size:11.5px; font-weight:700; border-radius:999px; padding:3px 10px; cursor:pointer;">#${esc(tag.label)}</button>`).join('')}
         </div>

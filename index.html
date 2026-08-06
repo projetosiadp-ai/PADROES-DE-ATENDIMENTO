@@ -17,21 +17,24 @@
   @keyframes dp-modal-in { from { transform: translateY(16px) scale(0.98); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
   @keyframes dp-shimmer { 0% { background-position: -300px 0; } 100% { background-position: 300px 0; } }
 
-  button { cursor: pointer; transition: transform .12s ease, box-shadow .15s ease, filter .12s ease, opacity .12s ease; }
+  button { cursor: pointer; transition: transform .2s ease, box-shadow .2s ease, filter .2s ease, opacity .2s ease; }
   button:hover { filter: brightness(1.07); }
   button:active { transform: scale(0.96); }
-  a { transition: opacity .12s ease; }
+  a { transition: opacity .2s ease; }
   a:hover { opacity: .75; }
-  input, textarea, select { transition: border-color .15s ease, box-shadow .15s ease; }
+  input, textarea, select { transition: border-color .2s ease, box-shadow .2s ease; }
   input:focus, textarea:focus, select:focus {
     outline: none !important;
     border-color: #0E93D8 !important;
     box-shadow: 0 0 0 3px rgba(14,147,216,0.18);
   }
-  [role="button"] { transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
-  [role="button"]:focus-visible, button:focus-visible, a:focus-visible {
+  [role="button"] { transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
+  [role="button"]:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
     outline: 2px solid #0E93D8;
     outline-offset: 2px;
+  }
+  .dp-card {
+    transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
   }
   .dp-card:hover {
     transform: translateY(-3px);
@@ -40,7 +43,7 @@
   }
   .dp-card:active { transform: translateY(-1px); }
   .dp-row-card {
-    transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+    transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
   }
   .dp-row-card:hover {
     transform: translateY(-2px);
@@ -75,6 +78,7 @@
     .dp-sidebar > div:first-child { padding: 2px 8px !important; flex-shrink: 0; }
     .dp-sidebar > div:not(:first-child) { flex-shrink: 0; margin-bottom: 0 !important; }
     .dp-sidebar > div[style*="font-size:10.5px"] { display: none; }
+    .dp-sidebar-collapse-btn { display: none !important; }
   }
 </style>
 </head>
