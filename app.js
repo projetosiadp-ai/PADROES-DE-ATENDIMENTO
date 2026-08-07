@@ -1283,7 +1283,7 @@ class App {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${t.textTertiary}" stroke-width="2.2" stroke-linecap="round" style="position:absolute; left:15px; top:50%; transform:translateY(-50%);"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           <input data-ref="${H(v.searchInputRef)}" data-focus="search" type="text" placeholder="Buscar mensagem, tag, categoria…  ( / )" value="${esc(v.searchQueryDraft)}" data-input="${H(v.onSearchChange)}" data-focusin="${H(v.onSearchFocus)}" data-focusout="${H(v.onSearchBlur)}" autocomplete="off" style="width:100%; padding:14px 18px 14px 46px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:15px; font-family:inherit;" />
           ${v.showSearchDropdown ? `
-          <div style="position:absolute; top:calc(100% + 6px); left:0; right:0; background:${t.modalSolidBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; box-shadow:${t.shadowLg}; overflow:hidden; z-index:50;">
+          <div style="position:absolute; top:calc(100% + 6px); left:0; right:0; background:${t.modalSolidBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; box-shadow:${t.shadowLg}; overflow-y:auto; overflow-x:hidden; max-height:min(300px, 45vh); z-index:50;">
             ${v.searchDropdownResults.length ? v.searchDropdownResults.map(r => `
               <div data-mousedown="${H(r.onPick)}" style="display:flex; align-items:center; gap:10px; padding:11px 16px; cursor:pointer; border-bottom:1px solid ${t.border};" class="dp-table-row">
                 <div style="flex:1; min-width:0;">
