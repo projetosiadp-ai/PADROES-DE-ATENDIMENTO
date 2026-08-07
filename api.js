@@ -109,8 +109,17 @@ export async function deleteMensagem(id) {
 
 export async function saveCategoria({ id, acessoId, nome }) {
   if (id) {
+    const { data: atual, error: readErr } = await supabase.from('categorias').select('nome').eq('id', id).single();
+    if (readErr) fail('Não foi possível salvar a categoria', readErr);
     const { error } = await supabase.from('categorias').update({ nome }).eq('id', id);
     if (error) fail('Não foi possível salvar a categoria', error);
+    // `mensagens.categoria` é texto livre, não uma FK — sem este update em lote,
+    // renomear a categoria deixaria as mensagens já cadastradas com o nome antigo
+    // (órfãs de qualquer filtro/chip de categoria, silenciosamente).
+    if (atual.nome !== nome) {
+      const { error: msgErr } = await supabase.from('mensagens').update({ categoria: nome }).eq('acesso_id', acessoId).eq('categoria', atual.nome);
+      if (msgErr) fail('Categoria renomeada, mas falhou ao atualizar as mensagens vinculadas', msgErr);
+    }
   } else {
     const { error } = await supabase.from('categorias').insert({ acesso_id: acessoId, nome });
     if (error) fail('Não foi possível criar a categoria', error);

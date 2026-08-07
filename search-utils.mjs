@@ -37,6 +37,11 @@ export function matchesSearch(msg, query) {
   );
 }
 
+export function pickActiveAcesso(acessos, activeAcessoId) {
+  if (!acessos.length) return null;
+  return acessos.find(a => a.id === activeAcessoId) || acessos[0];
+}
+
 export function titleSegments(titulo, query, highlightStyle) {
   const q = (query || '').trim();
   if (!q) return [{ text: titulo, style: '' }];

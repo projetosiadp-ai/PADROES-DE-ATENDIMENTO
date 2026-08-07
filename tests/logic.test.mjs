@@ -1,6 +1,6 @@
 // tests/logic.test.mjs
 import assert from 'node:assert/strict';
-import { normalize, levenshtein, fuzzyTok, matchesSearch, titleSegments } from '../search-utils.mjs';
+import { normalize, levenshtein, fuzzyTok, matchesSearch, titleSegments, pickActiveAcesso } from '../search-utils.mjs';
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -48,6 +48,26 @@ test('titleSegments highlights the matched substring with the given style', () =
 test('titleSegments returns a single plain segment when the query is empty', () => {
   const segs = titleSegments('Boas-vindas', '', 'HIGHLIGHT');
   assert.deepStrictEqual(segs, [{ text: 'Boas-vindas', style: '' }]);
+});
+
+test('pickActiveAcesso retorna o acesso com o id ativo quando ele existe na lista', () => {
+  const acessos = [{ id: 'a1', nome: 'Relacionamento' }, { id: 'a2', nome: 'Comercial' }];
+  assert.deepStrictEqual(pickActiveAcesso(acessos, 'a2'), { id: 'a2', nome: 'Comercial' });
+});
+
+test('pickActiveAcesso cai para o primeiro acesso quando o id ativo nao existe na lista', () => {
+  const acessos = [{ id: 'a1', nome: 'Relacionamento' }, { id: 'a2', nome: 'Comercial' }];
+  assert.deepStrictEqual(pickActiveAcesso(acessos, 'id-que-nao-existe'), { id: 'a1', nome: 'Relacionamento' });
+});
+
+test('pickActiveAcesso cai para o primeiro acesso quando activeAcessoId e null', () => {
+  const acessos = [{ id: 'a1', nome: 'Relacionamento' }];
+  assert.deepStrictEqual(pickActiveAcesso(acessos, null), { id: 'a1', nome: 'Relacionamento' });
+});
+
+test('pickActiveAcesso retorna null quando a lista de acessos esta vazia (usuario sem nenhum Acesso vinculado)', () => {
+  assert.strictEqual(pickActiveAcesso([], 'a1'), null);
+  assert.strictEqual(pickActiveAcesso([], null), null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

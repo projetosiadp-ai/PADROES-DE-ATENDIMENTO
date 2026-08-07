@@ -1,6 +1,6 @@
 // app.js
 import * as api from './api.js';
-import { normalize, matchesSearch, titleSegments as titleSegmentsPure } from './search-utils.mjs';
+import { normalize, matchesSearch, titleSegments as titleSegmentsPure, pickActiveAcesso } from './search-utils.mjs';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -91,6 +91,7 @@ class App {
     this._reg = {};
     this._regN = 0;
     this.searchEl = null;
+    this._toastSeq = 0;
     this.state = this.initialState();
   }
 
@@ -111,13 +112,14 @@ class App {
       categoryFilter: null,
       copiedId: null,
       expandedCardIds: new Set(),
+      saving: false,
       librarySort: 'relevance',
       libraryViewMode: 'grid',
       showPreviewModal: false, previewingMsgId: null,
       paletteOpen: false, paletteQuery: '', paletteIndex: 0,
       favoriteIds: [],       // mensagem_id[] for the current user
       recentIds: [],         // mensagem_id[] for the current user, most recent first
-      toast: { show: false, msg: '', type: 'success', body: '' },
+      toasts: [],
       confirm: { open: false, title: '', message: '', action: null },
       showMsgModal: false, editingMsgId: null,
       msgForm: { categoria: '', titulo: '', tagInput: '', tags: [], conteudo: '' },
@@ -125,7 +127,7 @@ class App {
       showAcessoModal: false, acessoForm: { nome: '', descricao: '', cor: '#1BA7DC' },
       showUsersModal: false, usersModalAcessoId: null,
       acessoUsers: [], allProfiles: [], addUserSelectedId: '',
-      acessoUsersLoading: false, resetPasswordResult: null,
+      acessoUsersLoading: false, resetPasswordResult: null, tempPasswordCopiedFor: null,
       acessos: [],
       acessoMembros: [],
       categorias: [],
@@ -315,7 +317,7 @@ class App {
   getActiveAcessoMsgs() {
     const st = this.state;
     if (!st.currentUser) return [];
-    const activeAcesso = st.acessos.find(a => a.id === st.activeAcessoId) || st.acessos[0];
+    const activeAcesso = pickActiveAcesso(st.acessos, st.activeAcessoId);
     if (!activeAcesso) return [];
     return st.mensagens.filter(m => m.acesso_id === activeAcesso.id);
   }
@@ -435,10 +437,12 @@ class App {
   }
 
   showToast(msg, type, body) {
-    clearTimeout(this._toastTimer);
     const t = this.theme();
-    this.setState({ toast: { show: true, msg, type: type || 'success', body: body || '', bg: type === 'error' ? t.danger : t.toastBg, ink: type === 'error' ? '#fff' : t.toastInk } });
-    this._toastTimer = setTimeout(() => this.setState({ toast: { show: false, msg: '', type: 'success', body: '' } }), body ? 6000 : 3000);
+    const id = ++this._toastSeq;
+    const toast = { id, msg, type: type || 'success', body: body || '', bg: type === 'error' ? t.danger : t.toastBg, ink: type === 'error' ? '#fff' : t.toastInk };
+    const MAX_VISIBLE = 4;
+    this.setState(s => ({ toasts: [...s.toasts, toast].slice(-MAX_VISIBLE) }));
+    setTimeout(() => this.setState(s => ({ toasts: s.toasts.filter(x => x.id !== id) })), body ? 6000 : 3000);
   }
 
   /* ---------------- computed bindings ---------------- */
@@ -449,7 +453,7 @@ class App {
     const session = st.currentUser;
 
     if (st.loading) {
-      return { isLogin: false, isApp: false, isLoading: true, theme, confirm: st.confirm, toast: st.toast,
+      return { isLogin: false, isApp: false, isLoading: true, theme, confirm: st.confirm, toasts: st.toasts,
         showMsgModal: false, showCatModal: false, showAcessoModal: false, showUsersModal: false,
         showPreviewModal: false, paletteOpen: false, showSolicitacaoModal: false, showApprovalPopup: false };
     }
@@ -467,13 +471,23 @@ class App {
         handleLogin: () => this.handleLogin(),
         onLoginKeyDown: (e) => { if (e.key === 'Enter') this.handleLogin(); },
         noop: (e) => e.preventDefault(),
-        confirm: st.confirm, toast: st.toast,
+        confirm: st.confirm, toasts: st.toasts,
         showMsgModal: false, showCatModal: false, showAcessoModal: false, showUsersModal: false
       };
     }
 
     const profile = session.profile;
-    const activeAcesso = st.acessos.find(a => a.id === st.activeAcessoId) || st.acessos[0];
+    const activeAcesso = pickActiveAcesso(st.acessos, st.activeAcessoId);
+    if (!activeAcesso) {
+      return {
+        isLogin: false, isApp: false, isNoAcesso: true, isLoading: false, theme,
+        noAcessoNome: profile.nome,
+        logout: () => this.logout(),
+        confirm: st.confirm, toasts: st.toasts,
+        showMsgModal: false, showCatModal: false, showAcessoModal: false, showUsersModal: false,
+        showPreviewModal: false, paletteOpen: false, showSolicitacaoModal: false, showApprovalPopup: false
+      };
+    }
     const acessoMsgs = st.mensagens.filter(m => m.acesso_id === activeAcesso.id);
     const acessoCats = st.categorias.filter(c => c.acesso_id === activeAcesso.id);
     const isSuperAdmin = profile.role === 'superadmin';
@@ -694,6 +708,7 @@ class App {
 
       resultsCountLabel: filtered.length === 1 ? '1 mensagem encontrada' : `${filtered.length} mensagens encontradas`,
       hasResults: filtered.length > 0,
+      libraryIsTrulyEmpty: acessoMsgs.length === 0 && !st.searchQuery.trim() && !st.categoryFilter,
       gridStyle, cardPadding, cardGap,
       cardList: filtered.map(buildCard),
 
@@ -741,7 +756,15 @@ class App {
         onResetPassword: () => this.requestResetPassword(u),
         onToggleAdmin: () => this.toggleMemberAdminLocal(u.userId, !u.isAdminLocal),
         onUnlink: () => this.requestUnlinkUser(u),
-        justReset: st.resetPasswordResult && st.resetPasswordResult.userId === u.userId ? st.resetPasswordResult.tempPassword : null
+        justReset: st.resetPasswordResult && st.resetPasswordResult.userId === u.userId ? st.resetPasswordResult.tempPassword : null,
+        tempPasswordCopied: st.tempPasswordCopiedFor === u.userId,
+        onCopyTempPassword: () => {
+          const pwd = st.resetPasswordResult && st.resetPasswordResult.tempPassword;
+          if (!pwd) return;
+          navigator.clipboard && navigator.clipboard.writeText(pwd).catch(() => {});
+          this.setState({ tempPasswordCopiedFor: u.userId });
+          setTimeout(() => this.setState({ tempPasswordCopiedFor: null }), 1400);
+        }
       })),
       addUserOptions: st.allProfiles.filter(p => !st.acessoUsers.some(u => u.userId === p.id)),
       addUserSelectedId: st.addUserSelectedId,
@@ -749,7 +772,9 @@ class App {
       addUserToAcesso: () => this.addUserToAcesso(),
       closeUsersModal: () => this.setState({ showUsersModal: false, resetPasswordResult: null }),
 
+      saving: st.saving,
       showMsgModal: st.showMsgModal, msgModalTitle: st.editingMsgId ? 'Editar mensagem' : 'Nova mensagem',
+      msgTituloRef: (el) => { if (el && !this._msgTituloFocused) { this._msgTituloFocused = true; el.focus(); } },
       msgForm: st.msgForm, msgFormTagChips, msgContentCount: st.msgForm.conteudo.length,
       onMsgCategoriaChange: (e) => this.setState(s => ({ msgForm: { ...s.msgForm, categoria: e.target.value } })),
       onMsgTituloChange: (e) => this.setState(s => ({ msgForm: { ...s.msgForm, titulo: e.target.value.slice(0, 100) } })),
@@ -761,13 +786,15 @@ class App {
       saveMsg: () => this.saveMsg(),
 
       showCatModal: st.showCatModal, catModalTitle: st.editingCatId ? 'Editar categoria' : 'Nova categoria', catForm: st.catForm,
-      openCreateCat: () => this.setState({ showCatModal: true, editingCatId: null, catForm: { nome: '' } }),
+      catNomeRef: (el) => { if (el && !this._catNomeFocused) { this._catNomeFocused = true; el.focus(); } },
+      openCreateCat: () => { this._catNomeFocused = false; this.setState({ showCatModal: true, editingCatId: null, catForm: { nome: '' } }); },
       onCatNomeChange: (e) => this.setState({ catForm: { nome: e.target.value } }),
       closeCatModal: () => this.setState({ showCatModal: false }),
       saveCat: () => this.saveCat(),
 
       showAcessoModal: st.showAcessoModal, acessoForm: st.acessoForm,
-      openCreateAcesso: () => this.setState({ showAcessoModal: true, acessoForm: { nome: '', descricao: '', cor: '#1BA7DC' } }),
+      acessoNomeRef: (el) => { if (el && !this._acessoNomeFocused) { this._acessoNomeFocused = true; el.focus(); } },
+      openCreateAcesso: () => { this._acessoNomeFocused = false; this.setState({ showAcessoModal: true, acessoForm: { nome: '', descricao: '', cor: '#1BA7DC' } }); },
       onAcessoNomeChange: (e) => this.setState(s => ({ acessoForm: { ...s.acessoForm, nome: e.target.value } })),
       onAcessoDescChange: (e) => this.setState(s => ({ acessoForm: { ...s.acessoForm, descricao: e.target.value } })),
       acessoColorOptions: ['#1BA7DC', '#0F2C6B', '#4F46E5', '#16A34A', '#D97706'].map(c => ({
@@ -819,7 +846,7 @@ class App {
       onRejectMotivoChange: (e) => this.setState({ rejectMotivo: e.target.value }),
       confirmReject: () => this.rejeitarSolicitacaoViewing(),
 
-      toast: st.toast
+      toasts: st.toasts
     };
   }
 
@@ -848,9 +875,11 @@ class App {
 
   openCreateMsg() {
     const cats = this.state.categorias.filter(c => c.acesso_id === this.state.activeAcessoId);
+    this._msgTituloFocused = false;
     this.setState({ showMsgModal: true, editingMsgId: null, msgForm: { categoria: cats[0] ? cats[0].nome : '', titulo: '', tagInput: '', tags: [], conteudo: '' } });
   }
   openEditMsg(msg) {
+    this._msgTituloFocused = false;
     this.setState({ showMsgModal: true, editingMsgId: msg.id, msgForm: { categoria: msg.categoria, titulo: msg.titulo, tagInput: '', tags: [...msg.tags], conteudo: msg.conteudo } });
   }
 
@@ -867,11 +896,14 @@ class App {
     this.setState(s => ({ msgForm: { ...s.msgForm, tags: [...s.msgForm.tags, val], tagInput: '' } }));
   }
   async saveMsg() {
+    if (this.state.saving) return;
     const f = this.state.msgForm;
+    if (!f.categoria) { this.showToast('Este Acesso ainda não tem categorias. Crie uma categoria antes de adicionar mensagens.', 'error'); return; }
     if (!f.titulo.trim() || !f.conteudo.trim()) { this.showToast('Preencha título e conteúdo.', 'error'); return; }
     const wasCreate = !this.state.editingMsgId;
     const acessoId = this.state.activeAcessoId;
     const userId = this.state.currentUser.profile.id;
+    this.setState({ saving: true });
 
     if (!this.isAdminNow(acessoId)) {
       try {
@@ -884,7 +916,7 @@ class App {
         this.setState({ showMsgModal: false });
         await this.refreshAppData(this.state.currentUser);
         this.showToast('Enviado para aprovação. Um administrador irá revisar.', 'success');
-      } catch (e) { this.showToast(e.message, 'error'); }
+      } catch (e) { this.showToast(e.message, 'error'); } finally { this.setState({ saving: false }); }
       return;
     }
 
@@ -900,7 +932,7 @@ class App {
       } else {
         this.showToast('Mensagem salva com sucesso!', 'success');
       }
-    } catch (e) { this.showToast(e.message, 'error'); }
+    } catch (e) { this.showToast(e.message, 'error'); } finally { this.setState({ saving: false }); }
   }
   async deleteMsg(id) {
     try {
@@ -945,16 +977,18 @@ class App {
       this.showToast('Solicitação rejeitada.', 'success');
     } catch (e) { this.showToast(e.message, 'error'); }
   }
-  openEditCat(cat) { this.setState({ showCatModal: true, editingCatId: cat.id, catForm: { nome: cat.nome } }); }
+  openEditCat(cat) { this._catNomeFocused = false; this.setState({ showCatModal: true, editingCatId: cat.id, catForm: { nome: cat.nome } }); }
   async saveCat() {
+    if (this.state.saving) return;
     const nome = this.state.catForm.nome.trim();
     if (!nome) { this.showToast('Informe o nome da categoria.', 'error'); return; }
+    this.setState({ saving: true });
     try {
       await api.saveCategoria({ id: this.state.editingCatId, acessoId: this.state.activeAcessoId, nome });
       this.setState({ showCatModal: false });
       await this.refreshAppData(this.state.currentUser);
       this.showToast('Categoria salva.', 'success');
-    } catch (e) { this.showToast(e.message, 'error'); }
+    } catch (e) { this.showToast(e.message, 'error'); } finally { this.setState({ saving: false }); }
   }
   async deleteCat(id) {
     try {
@@ -964,15 +998,17 @@ class App {
     } catch (e) { this.showToast(e.message, 'error'); }
   }
   async saveAcesso() {
+    if (this.state.saving) return;
     const f = this.state.acessoForm;
     if (!f.nome.trim()) { this.showToast('Informe o nome do Acesso.', 'error'); return; }
+    this.setState({ saving: true });
     try {
       const created = await api.saveAcesso({ nome: f.nome.trim(), descricao: f.descricao, cor: f.cor });
       this.setState({ showAcessoModal: false });
       await this.refreshAppData(this.state.currentUser);
       this.setState({ activeAcessoId: created.id, adminTab: 'categorias' });
       this.showToast('Acesso criado! Gerencie as categorias e mensagens dele abaixo.', 'success');
-    } catch (e) { this.showToast(e.message, 'error'); }
+    } catch (e) { this.showToast(e.message, 'error'); } finally { this.setState({ saving: false }); }
   }
   async toggleAcessoStatus(id, currentAtivo) {
     try {
@@ -1061,6 +1097,18 @@ class App {
           </div>
         </div>
       </div>`;
+    }
+    if (v.isNoAcesso) {
+      return `
+      <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:${v.theme.pageBg}; padding:24px;">
+        <div style="width:100%; max-width:420px; background:${v.theme.cardBg}; border:1px solid ${v.theme.border}; border-radius:${v.theme.radiusXl}; padding:40px 36px; text-align:center; box-shadow:${v.theme.shadowMd};">
+          <div style="font-size:17px; font-weight:800; color:${v.theme.text}; margin-bottom:10px; font-family:${v.theme.fontDisplay};">Sem acesso a nenhum departamento</div>
+          <div style="font-size:14px; color:${v.theme.textSecondary}; line-height:1.5; margin-bottom:24px;">
+            Olá, ${esc(v.noAcessoNome)}. Sua conta ainda não está vinculada a nenhum Acesso. Fale com um administrador para liberar seu acesso.
+          </div>
+          <button data-click="${this.h(v.logout)}" style="padding:12px 20px; border-radius:${v.theme.radiusSm}; border:none; background:${v.theme.brandGradient}; color:#fff; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; box-shadow:${v.theme.glow};">Sair</button>
+        </div>
+      </div>` + this.viewModals(v, v.theme, (fn) => this.h(fn));
     }
     const t = v.theme;
     const H = (fn) => this.h(fn);
@@ -1233,7 +1281,7 @@ class App {
             ${this.avatarIcon(m.catIcon, m.catColor, 26)}
             <div style="font-size:11px; font-weight:700; color:${t.textSecondary};">${esc(m.categoria)}</div>
           </div>
-          <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; line-height:1; display:flex;">${ic.star(m.isFav)}</button>
+          <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" aria-pressed="${m.isFav}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; line-height:1; display:flex;">${ic.star(m.isFav)}</button>
         </div>
         <div style="font-size:15.5px; font-weight:700; color:${t.text}; letter-spacing:-0.2px;">${m.titleSegments.map(seg => `<span style="${seg.style}">${esc(seg.text)}</span>`).join('')}</div>
         <div>
@@ -1260,7 +1308,7 @@ class App {
           <div style="font-size:14px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.titleSegments.map(seg => `<span style="${seg.style}">${esc(seg.text)}</span>`).join('')}</div>
           <div style="font-size:12px; color:${t.textTertiary}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(m.categoria)} · usada ${esc(m.frequencia)}x</div>
         </div>
-        <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; display:flex; flex-shrink:0;">${ic.star(m.isFav)}</button>
+        <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" aria-pressed="${m.isFav}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; display:flex; flex-shrink:0;">${ic.star(m.isFav)}</button>
         ${actionBtn(ic.eye, m.onPreview, 'Visualizar')}
         ${actionBtn(ic.edit, m.onEdit, 'Editar')}
         ${actionBtn(ic.trash, m.onDelete, 'Excluir', true)}
@@ -1288,8 +1336,9 @@ class App {
         ? (v.isGridView ? `<div style="${v.gridStyle}">${v.cardList.map(card).join('')}</div>` : `<div>${v.cardList.map(row).join('')}</div>`)
         : `<div style="text-align:center; padding:70px 20px; color:${t.textTertiary};">
             <div style="display:flex; justify-content:center; margin-bottom:12px;">${ic.search}</div>
-            <div style="font-weight:800; font-size:17px; color:${t.textSecondary};">Nenhuma mensagem encontrada</div>
-            <div style="font-size:14px; margin-top:5px;">Ajuste a busca ou os filtros de categoria.</div>
+            <div style="font-weight:800; font-size:17px; color:${t.textSecondary};">${v.libraryIsTrulyEmpty ? 'Nenhuma mensagem cadastrada ainda' : 'Nenhuma mensagem encontrada'}</div>
+            <div style="font-size:14px; margin-top:5px;">${v.libraryIsTrulyEmpty ? 'Crie a primeira mensagem para este Acesso.' : 'Ajuste a busca ou os filtros de categoria.'}</div>
+            ${v.libraryIsTrulyEmpty ? `<button data-click="${H(v.openCreateMsg)}" style="margin-top:16px; display:inline-flex; align-items:center; gap:7px; border:0; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; font-weight:800; font-size:13.5px; padding:10px 18px; cursor:pointer; box-shadow:${t.glow};"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Nova mensagem</button>` : ''}
           </div>`}
     </main>`;
   }
@@ -1376,6 +1425,11 @@ class App {
           <div style="font-size:19px; font-weight:800; font-family:${t.fontDisplay};">${title}</div>
           ${action || ''}
         </div>`;
+    const emptyState = (title, desc) => `
+        <div style="text-align:center; padding:60px 20px; background:${t.cardBg}; border:1px dashed ${t.border}; border-radius:${t.radiusLg};">
+          <div style="font-size:16px; font-weight:800; color:${t.text};">${title}</div>
+          <div style="font-size:13px; color:${t.textSecondary}; margin-top:6px;">${desc}</div>
+        </div>`;
     let content = '';
 
     if (v.isAdminMsgs) {
@@ -1397,7 +1451,7 @@ class App {
             <input type="text" data-focus="adminSearch" placeholder="Buscar…" value="${esc(v.adminSearchQuery)}" data-input="${H(v.onAdminSearchChange)}" style="padding:9px 12px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
             <button data-click="${H(v.openCreateMsg)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Nova mensagem</button>
           </div>`);
-      content += v.adminMsgsNarrow ? `
+      content += v.adminMsgRows.length === 0 ? emptyState('Nenhuma mensagem cadastrada', 'Crie a primeira mensagem para este Acesso.') : (v.adminMsgsNarrow ? `
         <div style="display:flex; flex-direction:column; gap:10px;">${v.adminMsgRows.map(msgCard).join('')}</div>` : `
         <div class="dp-table-scroll">
           <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; overflow:hidden; box-shadow:${t.shadowMd};">
@@ -1416,10 +1470,10 @@ class App {
                 </div>
               </div>`).join('')}
           </div>
-        </div>`;
+        </div>`);
     } else if (v.isAdminCats) {
       content = sectionHeader('Categorias de situação', `<button data-click="${H(v.openCreateCat)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Nova categoria</button>`);
-      content += `
+      content += v.catRows.length === 0 ? emptyState('Nenhuma categoria cadastrada', 'Crie uma categoria para organizar as mensagens.') : `
         <div style="display:flex; flex-direction:column; gap:10px;">
           ${v.catRows.map(cat => `
             <div data-key="${esc(cat.id)}" class="dp-row-card" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:14px 18px; box-shadow:${t.shadowSm};">
@@ -1478,11 +1532,7 @@ class App {
                 <div><button data-click="${H(row.onOpen)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:6px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Analisar</button></div>
               </div>`).join('')}
           </div>
-        </div>`) : `
-        <div style="text-align:center; padding:60px 20px; background:${t.cardBg}; border:1px dashed ${t.border}; border-radius:${t.radiusLg};">
-          <div style="font-size:16px; font-weight:800; color:${t.text};">Nenhuma solicitação pendente</div>
-          <div style="font-size:13px; color:${t.textSecondary}; margin-top:6px;">Quando um usuário criar, editar ou pedir exclusão de uma mensagem, aparecerá aqui.</div>
-        </div>`;
+        </div>`) : emptyState('Nenhuma solicitação pendente', 'Quando um usuário criar, editar ou pedir exclusão de uma mensagem, aparecerá aqui.');
     }
 
     const navIcon = (path) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">${path}</svg>`;
@@ -1490,8 +1540,9 @@ class App {
     const iconCats = navIcon('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>');
     const iconAcessos = navIcon('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>');
     const iconSolic = navIcon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 2 2 4-4"/>');
+    const tabKeyDown = (onClick) => (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } };
     const tabPill = (icon, label, active, onClick, bg, color, badge) => `
-        <div role="tab" tabindex="0" aria-selected="${active}" data-click="${H(onClick)}" style="display:flex; align-items:center; gap:8px; padding:10px 16px; border-radius:999px; cursor:pointer; font-size:13.5px; font-weight:700; background:${bg}; color:${color}; transition:background .2s ease, color .2s ease; white-space:nowrap;">
+        <div role="tab" tabindex="0" aria-selected="${active}" data-click="${H(onClick)}" data-keydown="${H(tabKeyDown(onClick))}" style="display:flex; align-items:center; gap:8px; padding:10px 16px; border-radius:999px; cursor:pointer; font-size:13.5px; font-weight:700; background:${bg}; color:${color}; transition:background .2s ease, color .2s ease; white-space:nowrap;">
           ${icon}${esc(label)}
           ${badge ? `<span style="background:${t.danger}; color:#fff; font-size:10px; font-weight:800; border-radius:999px; padding:2px 7px;">${badge}</span>` : ''}
         </div>`;
@@ -1529,7 +1580,7 @@ class App {
             </div>
             <div>
               <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Título (máx. 100 caracteres)</label>
-              <input type="text" data-focus="msgTitulo" maxlength="100" value="${esc(v.msgForm.titulo)}" data-input="${H(v.onMsgTituloChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
+              <input type="text" data-ref="${H(v.msgTituloRef)}" data-focus="msgTitulo" maxlength="100" value="${esc(v.msgForm.titulo)}" data-input="${H(v.onMsgTituloChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
             </div>
             <div>
               <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Tags</label>
@@ -1548,7 +1599,7 @@ class App {
           </div>
           <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:22px;">
             <button data-click="${H(v.closeMsgModal)}" style="padding:10px 18px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Cancelar</button>
-            <button data-click="${H(v.saveMsg)}" style="padding:10px 18px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Salvar</button>
+            <button data-click="${H(v.saveMsg)}" ${v.saving ? 'disabled' : ''} style="padding:10px 18px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer; opacity:${v.saving ? '0.7' : '1'};">${v.saving ? 'Salvando…' : 'Salvar'}</button>
           </div>
         </div>
       </div>`;
@@ -1560,10 +1611,10 @@ class App {
         <div role="dialog" aria-modal="true" aria-label="${esc(v.catModalTitle)}" data-click="${stay}" style="width:100%; max-width:400px; background:${t.cardBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
           <div style="font-size:18px; font-weight:800; margin-bottom:16px;">${esc(v.catModalTitle)}</div>
           <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Nome da categoria</label>
-          <input type="text" data-focus="catNome" value="${esc(v.catForm.nome)}" data-input="${H(v.onCatNomeChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
+          <input type="text" data-ref="${H(v.catNomeRef)}" data-focus="catNome" value="${esc(v.catForm.nome)}" data-input="${H(v.onCatNomeChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
           <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
             <button data-click="${H(v.closeCatModal)}" style="padding:10px 18px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Cancelar</button>
-            <button data-click="${H(v.saveCat)}" style="padding:10px 18px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Salvar</button>
+            <button data-click="${H(v.saveCat)}" ${v.saving ? 'disabled' : ''} style="padding:10px 18px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer; opacity:${v.saving ? '0.7' : '1'};">${v.saving ? 'Salvando…' : 'Salvar'}</button>
           </div>
         </div>
       </div>`;
@@ -1577,7 +1628,7 @@ class App {
           <div style="display:flex; flex-direction:column; gap:14px;">
             <div>
               <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Nome do Acesso</label>
-              <input type="text" data-focus="acessoNome" placeholder="ex: Financeiro" value="${esc(v.acessoForm.nome)}" data-input="${H(v.onAcessoNomeChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
+              <input type="text" data-ref="${H(v.acessoNomeRef)}" data-focus="acessoNome" placeholder="ex: Financeiro" value="${esc(v.acessoForm.nome)}" data-input="${H(v.onAcessoNomeChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
             </div>
             <div>
               <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Descrição (opcional)</label>
@@ -1592,7 +1643,7 @@ class App {
           </div>
           <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
             <button data-click="${H(v.closeAcessoModal)}" style="padding:10px 18px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Cancelar</button>
-            <button data-click="${H(v.saveAcesso)}" style="padding:10px 18px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Criar Acesso</button>
+            <button data-click="${H(v.saveAcesso)}" ${v.saving ? 'disabled' : ''} style="padding:10px 18px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer; opacity:${v.saving ? '0.7' : '1'};">${v.saving ? 'Salvando…' : 'Criar Acesso'}</button>
           </div>
         </div>
       </div>`;
@@ -1624,9 +1675,12 @@ class App {
                           </div>
                         </div>
                         ${u.justReset ? `
-                          <div style="padding:8px 10px; background:#DCFCE7; border-radius:6px;">
-                            <div style="font-size:10px; font-weight:800; color:#166534; text-transform:uppercase; margin-bottom:2px;">Senha temporária (copie agora)</div>
-                            <div style="font-family:monospace; font-size:13px; font-weight:700; color:#14532D; user-select:all;">${esc(u.justReset)}</div>
+                          <div style="padding:8px 10px; background:#DCFCE7; border-radius:6px; display:flex; align-items:center; gap:8px; justify-content:space-between;">
+                            <div style="min-width:0;">
+                              <div style="font-size:10px; font-weight:800; color:#166534; text-transform:uppercase; margin-bottom:2px;">Senha temporária (copie agora)</div>
+                              <div style="font-family:monospace; font-size:13px; font-weight:700; color:#14532D; user-select:all;">${esc(u.justReset)}</div>
+                            </div>
+                            <button data-click="${H(u.onCopyTempPassword)}" style="display:flex; align-items:center; gap:5px; border:none; background:#166534; color:#fff; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer; flex-shrink:0;">${u.tempPasswordCopied ? App.icons(t).check : App.icons(t).clipboard}${u.tempPasswordCopied ? 'Copiado' : 'Copiar'}</button>
                           </div>` : ''}
                       </div>`).join('')}
                   </div>`}
@@ -1773,13 +1827,16 @@ class App {
       </div>`;
     }
 
-    if (v.toast.show) {
+    if (v.toasts.length) {
       out += `
-      <div role="status" aria-live="polite" style="position:fixed; bottom:24px; right:24px; z-index:200; display:flex; flex-direction:column; gap:8px; background:${v.toast.bg}; color:${v.toast.ink || '#fff'}; border-radius:${t.radiusMd}; padding:13px 16px; box-shadow:0 12px 30px -8px rgba(0,0,0,0.35); animation:dp-toast-in .2s ease-out; max-width:min(400px,86vw);">
-        <div style="display:flex; align-items:center; gap:10px; font-weight:800; font-size:13.5px;">
-          <span style="width:20px; height:20px; border-radius:50%; background:${v.toast.type === 'error' ? 'rgba(255,255,255,.25)' : 'rgba(16,185,129,.9)'}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${v.toast.type === 'error' ? '!' : '✓'}</span>${esc(v.toast.msg)}
-        </div>
-        ${v.toast.body ? `<div style="white-space:pre-wrap; font-size:12.5px; line-height:1.55; font-weight:500; opacity:.85; max-height:200px; overflow:auto; border-top:1px solid rgba(128,140,170,.25); padding-top:8px;">${esc(v.toast.body)}</div>` : ''}
+      <div style="position:fixed; bottom:24px; right:24px; z-index:200; display:flex; flex-direction:column-reverse; gap:8px; max-width:min(400px,86vw);">
+        ${v.toasts.map(toast => `
+        <div data-key="toast-${esc(toast.id)}" role="status" aria-live="polite" style="background:${toast.bg}; color:${toast.ink || '#fff'}; border-radius:${t.radiusMd}; padding:13px 16px; box-shadow:0 12px 30px -8px rgba(0,0,0,0.35); animation:dp-toast-in .2s ease-out;">
+          <div style="display:flex; align-items:center; gap:10px; font-weight:800; font-size:13.5px;">
+            <span style="width:20px; height:20px; border-radius:50%; background:${toast.type === 'error' ? 'rgba(255,255,255,.25)' : 'rgba(16,185,129,.9)'}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${toast.type === 'error' ? '!' : '✓'}</span>${esc(toast.msg)}
+          </div>
+          ${toast.body ? `<div style="white-space:pre-wrap; font-size:12.5px; line-height:1.55; font-weight:500; opacity:.85; max-height:200px; overflow:auto; border-top:1px solid rgba(128,140,170,.25); padding-top:8px;">${esc(toast.body)}</div>` : ''}
+        </div>`).join('')}
       </div>`;
     }
 
