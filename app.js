@@ -92,6 +92,9 @@ class App {
     this._regN = 0;
     this.searchEl = null;
     this._toastSeq = 0;
+    this._pendingDeleteTimers = new Map();
+    this._searchDebounce = null;
+    this._adminSearchDebounce = null;
     this.state = this.initialState();
   }
 
@@ -106,12 +109,13 @@ class App {
       currentUser: null,     // { user, profile } from api.getSession()
       profileId: null,
       activeAcessoId: null,
-      searchQuery: '',
+      searchQuery: '', searchQueryDraft: '',
       searchFocused: false,
-      adminSearchQuery: '',
+      adminSearchQuery: '', adminSearchQueryDraft: '',
       categoryFilter: null,
       copiedId: null,
       expandedCardIds: new Set(),
+      pendingDeleteIds: new Set(),
       saving: false,
       librarySort: 'relevance',
       libraryViewMode: 'grid',
@@ -267,7 +271,7 @@ class App {
         else if (st.showApprovalPopup) this.setState({ showApprovalPopup: false });
         else if (st.confirm.open) this.setState({ confirm: { open: false, title: '', message: '', action: null } });
         else if (st.userMenuOpen) this.setState({ userMenuOpen: false });
-        else if (st.searchQuery) this.setState({ searchQuery: '' });
+        else if (st.searchQuery || st.searchQueryDraft) { clearTimeout(this._searchDebounce); this.setState({ searchQuery: '', searchQueryDraft: '' }); }
       }
     };
     window.addEventListener('keydown', this._keyHandler);
@@ -319,7 +323,7 @@ class App {
     if (!st.currentUser) return [];
     const activeAcesso = pickActiveAcesso(st.acessos, st.activeAcessoId);
     if (!activeAcesso) return [];
-    return st.mensagens.filter(m => m.acesso_id === activeAcesso.id);
+    return st.mensagens.filter(m => m.acesso_id === activeAcesso.id && !st.pendingDeleteIds.has(m.id));
   }
   copyMessage(msg) {
     const session = this.state.currentUser;
@@ -328,8 +332,16 @@ class App {
     this.setState({ copiedId: msg.id });
     setTimeout(() => this.setState({ copiedId: null }), 1400);
     this.showToast(`"${msg.titulo}" copiada!`, 'success', msg.conteudo);
+    // Ação mais frequente do app (todo clique em Copiar) — patch local em vez
+    // de refreshAppData() completo, que refaria a consulta do banco inteiro
+    // (todos os Acessos/categorias/mensagens) só pra refletir 1 incremento.
     Promise.all([api.incrementFrequencia(msg.id), api.recordRecente(profile.id, msg.id)])
-      .then(() => this.refreshAppData(session))
+      .then(() => {
+        this.setState(s => ({
+          mensagens: s.mensagens.map(m => m.id === msg.id ? { ...m, frequencia: m.frequencia + 1 } : m),
+          recentIds: [msg.id, ...s.recentIds.filter(id => id !== msg.id)].slice(0, 5)
+        }));
+      })
       .catch(e => this.showToast(e.message, 'error'));
   }
   paletteList() {
@@ -436,13 +448,13 @@ class App {
     return `<div style="width:${s}px; height:${s}px; border-radius:${radius}; background:linear-gradient(135deg, ${color}2E, ${color}16); color:${color}; display:flex; align-items:center; justify-content:center; flex-shrink:0; border:1px solid ${color}40; box-shadow:0 2px 6px -3px ${color}66;">${iconSvg}</div>`;
   }
 
-  showToast(msg, type, body) {
+  showToast(msg, type, body, action) {
     const t = this.theme();
     const id = ++this._toastSeq;
-    const toast = { id, msg, type: type || 'success', body: body || '', bg: type === 'error' ? t.danger : t.toastBg, ink: type === 'error' ? '#fff' : t.toastInk };
+    const toast = { id, msg, type: type || 'success', body: body || '', action: action || null, bg: type === 'error' ? t.danger : t.toastBg, ink: type === 'error' ? '#fff' : t.toastInk };
     const MAX_VISIBLE = 4;
     this.setState(s => ({ toasts: [...s.toasts, toast].slice(-MAX_VISIBLE) }));
-    setTimeout(() => this.setState(s => ({ toasts: s.toasts.filter(x => x.id !== id) })), body ? 6000 : 3000);
+    setTimeout(() => this.setState(s => ({ toasts: s.toasts.filter(x => x.id !== id) })), body || action ? 6000 : 3000);
   }
 
   /* ---------------- computed bindings ---------------- */
@@ -488,8 +500,8 @@ class App {
         showPreviewModal: false, paletteOpen: false, showSolicitacaoModal: false, showApprovalPopup: false
       };
     }
-    const acessoMsgs = st.mensagens.filter(m => m.acesso_id === activeAcesso.id);
-    const acessoCats = st.categorias.filter(c => c.acesso_id === activeAcesso.id);
+    const acessoMsgs = st.mensagens.filter(m => m.acesso_id === activeAcesso.id && !st.pendingDeleteIds.has(m.id));
+    const acessoCats = st.categorias.filter(c => c.acesso_id === activeAcesso.id && !st.pendingDeleteIds.has(c.id));
     const isSuperAdmin = profile.role === 'superadmin';
     // Superadmin pode alternar entre TODOS os Acessos ativos (não só os que tem
     // vínculo em acesso_membros) — senão um Acesso recém-criado nunca apareceria
@@ -672,8 +684,13 @@ class App {
       userAcessosOptions: userAcessoLinks.map(l => st.acessos.find(a => a.id === l.acesso_id)).filter(Boolean),
       onChangeActiveAcesso: (e) => this.setState({ activeAcessoId: e.target.value, categoryFilter: null }),
 
-      searchQuery: st.searchQuery, searchInputRef: (el) => { this.searchEl = el; },
-      onSearchChange: (e) => this.setState({ searchQuery: e.target.value }),
+      searchQuery: st.searchQuery, searchQueryDraft: st.searchQueryDraft, searchInputRef: (el) => { this.searchEl = el; },
+      onSearchChange: (e) => {
+        const val = e.target.value;
+        this.setState({ searchQueryDraft: val });
+        clearTimeout(this._searchDebounce);
+        this._searchDebounce = setTimeout(() => this.setState({ searchQuery: val }), 150);
+      },
       onSearchFocus: () => this.setState({ searchFocused: true }),
       onSearchBlur: () => this.setState({ searchFocused: false }),
       shortcutLabel: /Mac|iPhone|iPod|iPad/i.test(navigator.platform || '') ? '⌘K' : 'Ctrl K',
@@ -743,7 +760,13 @@ class App {
       paletteEmpty: st.paletteOpen && this.paletteList().length === 0,
 
       categorias: acessoCats,
-      adminSearchQuery: st.adminSearchQuery, onAdminSearchChange: (e) => this.setState({ adminSearchQuery: e.target.value }),
+      adminSearchQuery: st.adminSearchQuery, adminSearchQueryDraft: st.adminSearchQueryDraft,
+      onAdminSearchChange: (e) => {
+        const val = e.target.value;
+        this.setState({ adminSearchQueryDraft: val });
+        clearTimeout(this._adminSearchDebounce);
+        this._adminSearchDebounce = setTimeout(() => this.setState({ adminSearchQuery: val }), 150);
+      },
       adminMsgRows, catRows, acessoRows,
       openCreateMsg: () => this.openCreateMsg(),
       showUsersModal: st.showUsersModal,
@@ -893,6 +916,8 @@ class App {
   addMsgTag() {
     const val = this.state.msgForm.tagInput.trim();
     if (!val) return;
+    const isDupe = this.state.msgForm.tags.some(t => t.toLowerCase() === val.toLowerCase());
+    if (isDupe) { this.setState(s => ({ msgForm: { ...s.msgForm, tagInput: '' } })); return; }
     this.setState(s => ({ msgForm: { ...s.msgForm, tags: [...s.msgForm.tags, val], tagInput: '' } }));
   }
   async saveMsg() {
@@ -934,12 +959,38 @@ class App {
       }
     } catch (e) { this.showToast(e.message, 'error'); } finally { this.setState({ saving: false }); }
   }
-  async deleteMsg(id) {
-    try {
-      await api.deleteMensagem(id);
-      await this.refreshAppData(this.state.currentUser);
-      this.showToast('Mensagem excluída.', 'success');
-    } catch (e) { this.showToast(e.message, 'error'); }
+  /* Exclusão direta de admin não chama a API na hora — dá baixa visual
+   * imediata (via pendingDeleteIds) e só efetiva depois de 6s, dando tempo
+   * pro "Desfazer" do toast cancelar antes de qualquer chamada de rede. */
+  scheduleDelete(id, apiCall, successMsg) {
+    this.setState(s => ({ pendingDeleteIds: new Set(s.pendingDeleteIds).add(id) }));
+    const clear = () => this.setState(s => {
+      const next = new Set(s.pendingDeleteIds); next.delete(id); return { pendingDeleteIds: next };
+    });
+    const timer = setTimeout(async () => {
+      this._pendingDeleteTimers.delete(id);
+      try {
+        await apiCall();
+        await this.refreshAppData(this.state.currentUser);
+      } catch (e) {
+        clear();
+        this.showToast(e.message, 'error');
+        return;
+      }
+      clear();
+    }, 6000);
+    this._pendingDeleteTimers.set(id, timer);
+    this.showToast(successMsg, 'success', '', { label: 'Desfazer', onClick: () => this.undoDelete(id) });
+  }
+  undoDelete(id) {
+    const timer = this._pendingDeleteTimers.get(id);
+    if (timer) { clearTimeout(timer); this._pendingDeleteTimers.delete(id); }
+    this.setState(s => {
+      const next = new Set(s.pendingDeleteIds); next.delete(id); return { pendingDeleteIds: next };
+    });
+  }
+  deleteMsg(id) {
+    this.scheduleDelete(id, () => api.deleteMensagem(id), 'Mensagem excluída.');
   }
   requestDeleteMsg(msg) {
     if (this.isAdminNow(msg.acesso_id)) {
@@ -990,12 +1041,8 @@ class App {
       this.showToast('Categoria salva.', 'success');
     } catch (e) { this.showToast(e.message, 'error'); } finally { this.setState({ saving: false }); }
   }
-  async deleteCat(id) {
-    try {
-      await api.deleteCategoria(id);
-      await this.refreshAppData(this.state.currentUser);
-      this.showToast('Categoria excluída.', 'success');
-    } catch (e) { this.showToast(e.message, 'error'); }
+  deleteCat(id) {
+    this.scheduleDelete(id, () => api.deleteCategoria(id), 'Categoria excluída.');
   }
   async saveAcesso() {
     if (this.state.saving) return;
@@ -1234,7 +1281,7 @@ class App {
       ${showLibraryTools ? `
         <div style="position:relative; width:100%;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${t.textTertiary}" stroke-width="2.2" stroke-linecap="round" style="position:absolute; left:15px; top:50%; transform:translateY(-50%);"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input data-ref="${H(v.searchInputRef)}" data-focus="search" type="text" placeholder="Buscar mensagem, tag, categoria…  ( / )" value="${esc(v.searchQuery)}" data-input="${H(v.onSearchChange)}" data-focusin="${H(v.onSearchFocus)}" data-focusout="${H(v.onSearchBlur)}" autocomplete="off" style="width:100%; padding:14px 18px 14px 46px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:15px; font-family:inherit;" />
+          <input data-ref="${H(v.searchInputRef)}" data-focus="search" type="text" placeholder="Buscar mensagem, tag, categoria…  ( / )" value="${esc(v.searchQueryDraft)}" data-input="${H(v.onSearchChange)}" data-focusin="${H(v.onSearchFocus)}" data-focusout="${H(v.onSearchBlur)}" autocomplete="off" style="width:100%; padding:14px 18px 14px 46px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:15px; font-family:inherit;" />
           ${v.showSearchDropdown ? `
           <div style="position:absolute; top:calc(100% + 6px); left:0; right:0; background:${t.modalSolidBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; box-shadow:${t.shadowLg}; overflow:hidden; z-index:50;">
             ${v.searchDropdownResults.length ? v.searchDropdownResults.map(r => `
@@ -1448,7 +1495,7 @@ class App {
         </div>`;
       content = sectionHeader('Mensagens', `
           <div style="display:flex; gap:10px; align-items:center;">
-            <input type="text" data-focus="adminSearch" placeholder="Buscar…" value="${esc(v.adminSearchQuery)}" data-input="${H(v.onAdminSearchChange)}" style="padding:9px 12px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
+            <input type="text" data-focus="adminSearch" placeholder="Buscar…" value="${esc(v.adminSearchQueryDraft)}" data-input="${H(v.onAdminSearchChange)}" style="padding:9px 12px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
             <button data-click="${H(v.openCreateMsg)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Nova mensagem</button>
           </div>`);
       content += v.adminMsgRows.length === 0 ? emptyState('Nenhuma mensagem cadastrada', 'Crie a primeira mensagem para este Acesso.') : (v.adminMsgsNarrow ? `
@@ -1680,7 +1727,7 @@ class App {
                               <div style="font-size:10px; font-weight:800; color:#166534; text-transform:uppercase; margin-bottom:2px;">Senha temporária (copie agora)</div>
                               <div style="font-family:monospace; font-size:13px; font-weight:700; color:#14532D; user-select:all;">${esc(u.justReset)}</div>
                             </div>
-                            <button data-click="${H(u.onCopyTempPassword)}" style="display:flex; align-items:center; gap:5px; border:none; background:#166534; color:#fff; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer; flex-shrink:0;">${u.tempPasswordCopied ? App.icons(t).check : App.icons(t).clipboard}${u.tempPasswordCopied ? 'Copiado' : 'Copiar'}</button>
+                            <button data-click="${H(u.onCopyTempPassword)}" style="display:flex; align-items:center; gap:5px; border:none; background:${u.tempPasswordCopied ? t.ok : '#166534'}; color:#fff; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer; flex-shrink:0;">${u.tempPasswordCopied ? App.icons(t).check : App.icons(t).clipboard}${u.tempPasswordCopied ? 'Copiado' : 'Copiar'}</button>
                           </div>` : ''}
                       </div>`).join('')}
                   </div>`}
@@ -1836,6 +1883,7 @@ class App {
             <span style="width:20px; height:20px; border-radius:50%; background:${toast.type === 'error' ? 'rgba(255,255,255,.25)' : 'rgba(16,185,129,.9)'}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${toast.type === 'error' ? '!' : '✓'}</span>${esc(toast.msg)}
           </div>
           ${toast.body ? `<div style="white-space:pre-wrap; font-size:12.5px; line-height:1.55; font-weight:500; opacity:.85; max-height:200px; overflow:auto; border-top:1px solid rgba(128,140,170,.25); padding-top:8px;">${esc(toast.body)}</div>` : ''}
+          ${toast.action ? `<button data-click="${H(() => { toast.action.onClick(); this.setState(s => ({ toasts: s.toasts.filter(x => x.id !== toast.id) })); })}" style="margin-top:8px; border:1px solid rgba(255,255,255,.4); background:transparent; color:inherit; font-size:12px; font-weight:800; padding:6px 12px; border-radius:7px; cursor:pointer;">${esc(toast.action.label)}</button>` : ''}
         </div>`).join('')}
       </div>`;
     }
