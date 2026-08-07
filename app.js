@@ -1227,7 +1227,7 @@ class App {
 
     return `
     <aside class="dp-sidebar" style="position:sticky; top:0; height:100vh; width:${c ? '72px' : '262px'}; display:flex; flex-direction:column; gap:2px; background:${t.cardBg}; border-right:1px solid ${t.border}; padding:20px 14px 16px; overflow:auto; transition:width .15s cubic-bezier(0.4,0,0.2,1), padding .15s cubic-bezier(0.4,0,0.2,1);">
-      <div role="button" tabindex="0" data-click="${H(v.goBiblioteca)}" aria-label="DentalPlus" class="${c ? 'dp-tooltip-target' : ''}" style="position:relative; display:flex; flex-direction:column; align-items:${c ? 'center' : 'flex-start'}; gap:2px; padding:2px 8px 18px; cursor:pointer;">
+      <div role="button" tabindex="0" data-click="${H(v.goBiblioteca)}" aria-label="DentalPlus" class="${c ? 'dp-tooltip-target' : ''}" style="position:relative; display:flex; flex-direction:column; align-items:center; gap:2px; padding:2px 8px 18px; cursor:pointer; text-align:center;">
         ${c
           ? `<img src="assets/favicon.png" alt="DentalPlus" width="32" height="32" style="height:32px; width:32px; border-radius:9px;" />`
           : `<img src="${t.logoSrc}" alt="DentalPlus" width="160" height="26" style="height:24px; width:auto;" /><span style="font-size:11px; color:${t.textTertiary}; font-weight:700;">Padrões de atendimento</span>`}
@@ -1240,13 +1240,13 @@ class App {
       ${catRow(t.textTertiary, 'Todas', v.chipAllCount, v.chipAllActive, v.setCategoryAll)}
       ${v.categoriaChips.map(chip => catRow(chip.color, chip.nome, chip.count, chip.active, chip.onClick)).join('')}
       <div style="flex:1;"></div>
-      <div style="border-top:1px solid ${t.border}; padding-top:12px; display:flex; flex-direction:column; gap:8px;">
+      <div style="border-top:1px solid ${t.border}; padding-top:14px; display:flex; flex-direction:column; gap:10px;">
         <button class="dp-sidebar-collapse-btn${c ? ' dp-tooltip-target' : ''}" data-click="${H(v.toggleSidebarCollapsed)}" aria-label="${c ? 'Expandir menu' : 'Recolher menu'}" style="position:relative; display:flex; align-items:center; gap:10px; justify-content:${c ? 'center' : 'flex-start'}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer;">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; transform:rotate(${c ? '180deg' : '0deg'}); transition:transform .15s cubic-bezier(0.4,0,0.2,1);"><path d="M15 18l-6-6 6-6"/></svg>${c ? '' : 'Recolher menu'}
           ${tip('Expandir menu')}
         </button>
         <button class="${c ? 'dp-tooltip-target' : ''}" data-click="${H(v.toggleDarkMode)}" aria-label="Alternar tema" style="position:relative; display:flex; align-items:center; gap:10px; justify-content:${c ? 'center' : 'flex-start'}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer;">${v.darkModeIcon}${c ? '' : ' Alternar tema'}${tip('Alternar tema')}</button>
-        <div style="display:flex; align-items:center; gap:10px; padding:4px; flex-direction:${c ? 'column' : 'row'}; justify-content:${c ? 'center' : 'flex-start'};">
+        <div style="display:flex; align-items:center; gap:10px; padding:${c ? '10px 4px 0' : '12px 4px 0'}; margin-top:2px; border-top:1px solid ${t.border}; flex-direction:${c ? 'column' : 'row'}; justify-content:${c ? 'center' : 'flex-start'};">
           <div aria-label="${c ? esc(v.currentUser.nome) : ''}" class="${c ? 'dp-tooltip-target' : ''}" style="position:relative; width:32px; height:32px; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${esc(v.currentUser.iniciais)}${tip(v.currentUser.nome)}</div>
           ${c ? '' : `
           <div style="flex:1; min-width:0; line-height:1.15;">
@@ -1321,7 +1321,7 @@ class App {
     const actionBtn = (icon, onClick, label, danger) => `<button data-click="${H(onClick)}" title="${esc(label)}" aria-label="${esc(label)}" style="width:30px; height:30px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:transparent; color:${danger ? t.danger : t.textSecondary}; cursor:pointer; display:flex; align-items:center; justify-content:center;">${icon}</button>`;
 
     const card = (m) => `
-      <div data-key="${esc(m.id)}" class="dp-card" style="position:relative; overflow:hidden; background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${t.shadowMd}; break-inside:avoid; margin-bottom:${v.cardGap}px;">
+      <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" class="dp-card" style="position:relative; overflow:hidden; cursor:pointer; background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${t.shadowMd}; break-inside:avoid; margin-bottom:${v.cardGap}px;">
         <span style="position:absolute; top:0; left:0; height:3px; border-radius:0 3px 3px 0; width:${m.heatWidth}%; background:${t.brandGradient}; opacity:${m.frequencia ? .85 : 0};"></span>
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
           <div style="display:flex; align-items:center; gap:8px;">
@@ -1349,7 +1349,7 @@ class App {
       </div>`;
 
     const row = (m) => `
-      <div data-key="${esc(m.id)}" style="display:flex; align-items:center; gap:14px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:12px 16px; margin-bottom:8px;">
+      <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" style="display:flex; align-items:center; gap:14px; cursor:pointer; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:12px 16px; margin-bottom:8px;">
         ${this.avatarIcon(m.catIcon, m.catColor, 32)}
         <div style="flex:1; min-width:0;">
           <div style="font-size:14px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.titleSegments.map(seg => `<span style="${seg.style}">${esc(seg.text)}</span>`).join('')}</div>
@@ -1394,7 +1394,7 @@ class App {
     const ic = App.icons(t);
     const panelHeader = (icon, label, bg, color) => `<div style="display:flex; align-items:center; gap:10px; margin-bottom:18px;"><span style="width:34px; height:34px; border-radius:11px; background:${bg}; color:${color}; display:flex; align-items:center; justify-content:center;">${icon}</span><span style="font-weight:700; font-size:16px; font-family:${t.fontDisplay};">${esc(label)}</span></div>`;
     const rankRow = (m) => `
-      <div style="display:flex; align-items:center; gap:12px; background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:11px 14px;">
+      <div data-click="${H(m.onCopy)}" style="display:flex; align-items:center; gap:12px; cursor:pointer; background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:11px 14px;">
         <span style="width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px; flex-shrink:0; background:${m.rankColor}2E; color:${m.rankColor};">${m.rank}</span>
         <span style="flex:1; min-width:0;">
           <span style="display:block; font-weight:800; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(m.titulo)}</span>
@@ -1406,7 +1406,7 @@ class App {
         <button data-click="${H(m.onCopy)}" style="flex-shrink:0; border:none; background:${m.copied ? t.ok : t.brand}; color:#fff; font-size:11px; font-weight:700; padding:6px 12px; border-radius:9px; cursor:pointer;">${esc(m.copyLabel)}</button>
       </div>`;
     const plainRow = (m) => `
-      <div style="display:flex; align-items:center; gap:12px; background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:11px 14px;">
+      <div data-click="${H(m.onCopy)}" style="display:flex; align-items:center; gap:12px; cursor:pointer; background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:11px 14px;">
         ${this.avatarIcon(m.catIcon, m.catColor, 30)}
         <span style="flex:1; min-width:0;">
           <span style="display:block; font-weight:800; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(m.titulo)}</span>
