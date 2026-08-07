@@ -106,6 +106,7 @@ class App {
       profileId: null,
       activeAcessoId: null,
       searchQuery: '',
+      searchFocused: false,
       adminSearchQuery: '',
       categoryFilter: null,
       copiedId: null,
@@ -185,6 +186,9 @@ class App {
     this.root.addEventListener('input', dispatch('input'));
     this.root.addEventListener('change', dispatch('change'));
     this.root.addEventListener('keydown', dispatch('keydown'));
+    this.root.addEventListener('mousedown', dispatch('mousedown'));
+    this.root.addEventListener('focusin', dispatch('focusin'));
+    this.root.addEventListener('focusout', dispatch('focusout'));
 
     // Keyboard activation (Enter/Space) for clickable divs (role="button")
     // that don't define their own data-keydown handler.
@@ -656,7 +660,23 @@ class App {
 
       searchQuery: st.searchQuery, searchInputRef: (el) => { this.searchEl = el; },
       onSearchChange: (e) => this.setState({ searchQuery: e.target.value }),
+      onSearchFocus: () => this.setState({ searchFocused: true }),
+      onSearchBlur: () => this.setState({ searchFocused: false }),
       shortcutLabel: /Mac|iPhone|iPod|iPad/i.test(navigator.platform || '') ? '⌘K' : 'Ctrl K',
+
+      searchDropdownResults: (() => {
+        const q = st.searchQuery.trim();
+        if (!q) return [];
+        return acessoMsgs.filter(m => this.matchesSearch(m, q))
+          .sort((a, b) => b.frequencia - a.frequencia)
+          .slice(0, 6)
+          .map(m => ({
+            id: m.id, titulo: m.titulo, categoria: m.categoria,
+            snippet: m.conteudo.length > 70 ? m.conteudo.slice(0, 70) + '…' : m.conteudo,
+            onPick: (e) => { e.preventDefault(); this.copyMessage(m); this.setState({ searchFocused: false }); if (this.searchEl) this.searchEl.blur(); }
+          }));
+      })(),
+      showSearchDropdown: st.searchFocused && st.searchQuery.trim().length > 0,
 
       darkModeIcon: App.icons(theme)[st.darkMode ? 'sun' : 'moon'],
       toggleDarkMode: () => { const val = !st.darkMode; this.setState({ darkMode: val }); try { localStorage.setItem('dp_darkmode', val ? '1' : '0'); } catch (e) {} },
@@ -1166,7 +1186,19 @@ class App {
       ${showLibraryTools ? `
         <div style="position:relative; width:100%;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${t.textTertiary}" stroke-width="2.2" stroke-linecap="round" style="position:absolute; left:15px; top:50%; transform:translateY(-50%);"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input data-ref="${H(v.searchInputRef)}" data-focus="search" type="text" placeholder="Buscar mensagem, tag, categoria…  ( / )" value="${esc(v.searchQuery)}" data-input="${H(v.onSearchChange)}" style="width:100%; padding:14px 18px 14px 46px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:15px; font-family:inherit;" />
+          <input data-ref="${H(v.searchInputRef)}" data-focus="search" type="text" placeholder="Buscar mensagem, tag, categoria…  ( / )" value="${esc(v.searchQuery)}" data-input="${H(v.onSearchChange)}" data-focusin="${H(v.onSearchFocus)}" data-focusout="${H(v.onSearchBlur)}" autocomplete="off" style="width:100%; padding:14px 18px 14px 46px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:15px; font-family:inherit;" />
+          ${v.showSearchDropdown ? `
+          <div style="position:absolute; top:calc(100% + 6px); left:0; right:0; background:${t.modalSolidBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; box-shadow:${t.shadowLg}; overflow:hidden; z-index:50;">
+            ${v.searchDropdownResults.length ? v.searchDropdownResults.map(r => `
+              <div data-mousedown="${H(r.onPick)}" style="display:flex; align-items:center; gap:10px; padding:11px 16px; cursor:pointer; border-bottom:1px solid ${t.border};" class="dp-table-row">
+                <div style="flex:1; min-width:0;">
+                  <div style="font-size:13.5px; font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.titulo)}</div>
+                  <div style="font-size:12px; color:${t.textSecondary}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.snippet)}</div>
+                </div>
+                <div style="font-size:10.5px; font-weight:800; color:${t.accent}; background:${t.accentSoft}; padding:3px 9px; border-radius:999px; flex-shrink:0;">${esc(r.categoria)}</div>
+              </div>`).join('') : `
+              <div style="padding:16px; text-align:center; font-size:13px; color:${t.textTertiary};">Nenhuma mensagem encontrada</div>`}
+          </div>` : ''}
         </div>` : ''}
     </header>`;
   }
