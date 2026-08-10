@@ -331,7 +331,7 @@ class App {
     navigator.clipboard && navigator.clipboard.writeText(msg.conteudo).catch(() => {});
     this.setState({ copiedId: msg.id });
     setTimeout(() => this.setState({ copiedId: null }), 1400);
-    this.showToast(`"${msg.titulo}" copiada!`, 'success', msg.conteudo);
+    this.showToast(`"${msg.titulo}" copiada!`, 'success', msg.conteudo, null, 3000);
     // Ação mais frequente do app (todo clique em Copiar) — patch local em vez
     // de refreshAppData() completo, que refaria a consulta do banco inteiro
     // (todos os Acessos/categorias/mensagens) só pra refletir 1 incremento.
@@ -448,13 +448,17 @@ class App {
     return `<div style="width:${s}px; height:${s}px; border-radius:${radius}; background:linear-gradient(135deg, ${color}2E, ${color}16); color:${color}; display:flex; align-items:center; justify-content:center; flex-shrink:0; border:1px solid ${color}40; box-shadow:0 2px 6px -3px ${color}66;">${iconSvg}</div>`;
   }
 
-  showToast(msg, type, body, action) {
+  showToast(msg, type, body, action, duration) {
     const t = this.theme();
     const id = ++this._toastSeq;
-    const toast = { id, msg, type: type || 'success', body: body || '', action: action || null, bg: type === 'error' ? t.danger : t.toastBg, ink: type === 'error' ? '#fff' : t.toastInk };
+    const ms = duration || (body || action ? 6000 : 3000);
+    const toast = { id, msg, type: type || 'success', body: body || '', action: action || null, duration: ms, bg: type === 'error' ? t.danger : t.toastBg, ink: type === 'error' ? '#fff' : t.toastInk };
     const MAX_VISIBLE = 4;
     this.setState(s => ({ toasts: [...s.toasts, toast].slice(-MAX_VISIBLE) }));
-    setTimeout(() => this.setState(s => ({ toasts: s.toasts.filter(x => x.id !== id) })), body || action ? 6000 : 3000);
+    setTimeout(() => this.setState(s => ({ toasts: s.toasts.filter(x => x.id !== id) })), ms);
+  }
+  dismissToast(id) {
+    this.setState(s => ({ toasts: s.toasts.filter(x => x.id !== id) }));
   }
 
   /* ---------------- computed bindings ---------------- */
@@ -1440,6 +1444,13 @@ class App {
         </div>
       </div>
 
+      <section style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusXl}; padding:22px; box-shadow:${t.shadowMd};">
+        ${panelHeader(App.icons(t).star ? App.icons(t).star(true, '#8B5CF6') : '', 'Favoritas — copie com 1 clique', 'rgba(139,92,246,.14)', '#8B5CF6')}
+        <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px;">
+          ${v.hasFav ? v.favList.map(favTile).join('') : `<div style="grid-column:1/-1; color:${t.textTertiary}; font-size:13px; text-align:center; border:1px dashed ${t.border}; border-radius:${t.radiusMd}; padding:20px;">Marque mensagens com a estrela para vê-las aqui.</div>`}
+        </div>
+      </section>
+
       <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:18px; align-items:start;">
         <section style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusXl}; padding:22px; box-shadow:${t.shadowMd};">
           ${panelHeader(ic.fire, 'Mais usadas', '#E8A10B26', '#E8A10B')}
@@ -1454,13 +1465,6 @@ class App {
           </div>
         </section>
       </div>
-
-      <section style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusXl}; padding:22px; box-shadow:${t.shadowMd};">
-        ${panelHeader(App.icons(t).star ? App.icons(t).star(true, '#8B5CF6') : '', 'Favoritas — copie com 1 clique', 'rgba(139,92,246,.14)', '#8B5CF6')}
-        <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px;">
-          ${v.hasFav ? v.favList.map(favTile).join('') : `<div style="grid-column:1/-1; color:${t.textTertiary}; font-size:13px; text-align:center; border:1px dashed ${t.border}; border-radius:${t.radiusMd}; padding:20px;">Marque mensagens com a estrela para vê-las aqui.</div>`}
-        </div>
-      </section>
     </main>`;
   }
 
@@ -1875,15 +1879,24 @@ class App {
     }
 
     if (v.toasts.length) {
+      const toastIcon = (ok) => ok
+        ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`
+        : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5M12 16.5h.01"/><circle cx="12" cy="12" r="9"/></svg>`;
+      const closeIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg>`;
       out += `
-      <div style="position:fixed; bottom:24px; right:24px; z-index:200; display:flex; flex-direction:column-reverse; gap:8px; max-width:min(400px,86vw);">
+      <div style="position:fixed; bottom:24px; right:24px; z-index:200; display:flex; flex-direction:column-reverse; gap:10px; max-width:min(380px,86vw);">
         ${v.toasts.map(toast => `
-        <div data-key="toast-${esc(toast.id)}" role="status" aria-live="polite" style="background:${toast.bg}; color:${toast.ink || '#fff'}; border-radius:${t.radiusMd}; padding:13px 16px; box-shadow:0 12px 30px -8px rgba(0,0,0,0.35); animation:dp-toast-in .2s ease-out;">
-          <div style="display:flex; align-items:center; gap:10px; font-weight:800; font-size:13.5px;">
-            <span style="width:20px; height:20px; border-radius:50%; background:${toast.type === 'error' ? 'rgba(255,255,255,.25)' : 'rgba(16,185,129,.9)'}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${toast.type === 'error' ? '!' : '✓'}</span>${esc(toast.msg)}
+        <div data-key="toast-${esc(toast.id)}" role="status" aria-live="polite" style="position:relative; overflow:hidden; background:${toast.bg}; color:${toast.ink || '#fff'}; border-radius:${t.radiusLg}; box-shadow:0 16px 36px -12px rgba(0,0,0,.4), 0 2px 8px -2px rgba(0,0,0,.15); animation:dp-toast-in .25s cubic-bezier(.2,.9,.3,1.3);">
+          <div style="display:flex; align-items:flex-start; gap:11px; padding:14px 14px 14px 16px;">
+            <span style="width:24px; height:24px; border-radius:50%; background:${toast.type === 'error' ? 'rgba(255,255,255,.22)' : 'rgba(16,185,129,.95)'}; color:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:1px; box-shadow:0 2px 6px -1px rgba(0,0,0,.25);">${toastIcon(toast.type !== 'error')}</span>
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:800; font-size:13.5px; font-family:${t.fontDisplay}; line-height:1.35;">${esc(toast.msg)}</div>
+              ${toast.body ? `<div style="white-space:pre-wrap; font-size:12px; line-height:1.5; font-weight:500; opacity:.8; margin-top:7px; max-height:150px; overflow:auto; background:rgba(128,140,170,.14); border-radius:9px; padding:8px 10px;">${esc(toast.body)}</div>` : ''}
+              ${toast.action ? `<button data-click="${H(() => { toast.action.onClick(); this.dismissToast(toast.id); })}" style="margin-top:9px; border:1px solid rgba(255,255,255,.4); background:transparent; color:inherit; font-size:12px; font-weight:800; padding:6px 13px; border-radius:8px; cursor:pointer;">${esc(toast.action.label)}</button>` : ''}
+            </div>
+            <button data-click="${H(() => this.dismissToast(toast.id))}" aria-label="Fechar" title="Fechar" style="flex-shrink:0; width:20px; height:20px; border-radius:50%; border:none; background:transparent; color:inherit; opacity:.55; display:flex; align-items:center; justify-content:center; cursor:pointer; margin-top:2px;">${closeIcon}</button>
           </div>
-          ${toast.body ? `<div style="white-space:pre-wrap; font-size:12.5px; line-height:1.55; font-weight:500; opacity:.85; max-height:200px; overflow:auto; border-top:1px solid rgba(128,140,170,.25); padding-top:8px;">${esc(toast.body)}</div>` : ''}
-          ${toast.action ? `<button data-click="${H(() => { toast.action.onClick(); this.setState(s => ({ toasts: s.toasts.filter(x => x.id !== toast.id) })); })}" style="margin-top:8px; border:1px solid rgba(255,255,255,.4); background:transparent; color:inherit; font-size:12px; font-weight:800; padding:6px 12px; border-radius:7px; cursor:pointer;">${esc(toast.action.label)}</button>` : ''}
+          <span style="position:absolute; left:0; bottom:0; height:2.5px; width:100%; background:rgba(128,140,170,.3); overflow:hidden; display:block;"><span style="display:block; height:100%; background:${toast.type === 'error' ? 'rgba(255,255,255,.7)' : t.brandGradient}; animation:dp-toast-progress ${toast.duration}ms linear forwards;"></span></span>
         </div>`).join('')}
       </div>`;
     }
