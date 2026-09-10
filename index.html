@@ -3,14 +3,32 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Biblioteca de mensagens de atendimento DentalPlus">
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+<meta name="theme-color" content="#16336E">
 <title>Mensagens de Relacionamento — DentalPlus</title>
 <link rel="icon" href="assets/favicon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Nunito:wght@700;800;900&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="preload" href="vendor/supabase.js" as="script">
+<link rel="modulepreload" href="app.js">
+<link rel="modulepreload" href="api.js">
+<link rel="modulepreload" href="config.js">
+<link rel="modulepreload" href="search-utils.mjs">
+<link rel="modulepreload" href="domain/library.mjs">
+<link rel="modulepreload" href="domain/api-errors.mjs">
+<link rel="modulepreload" href="domain/requests.mjs">
+<link rel="modulepreload" href="domain/permissions.mjs">
+<link rel="modulepreload" href="domain/error-policy.mjs">
+<link rel="modulepreload" href="ui/clipboard.mjs">
+<link rel="modulepreload" href="ui/dom-morph.mjs">
+<link rel="modulepreload" href="ui/focus.mjs">
+<link rel="modulepreload" href="views/library-view.mjs">
+<link rel="modulepreload" href="views/admin-view.mjs">
+<link rel="modulepreload" href="views/modal-view.mjs">
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; font-family: 'Manrope', sans-serif; }
+  html, body, #app { max-width: 100%; overflow-x: clip; }
+  .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
   h1, h2, h3 { font-family: 'Sora', 'Manrope', sans-serif; }
   ::selection { background: #0E93D855; }
   @keyframes dp-toast-in { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
@@ -76,6 +94,17 @@
   @keyframes dp-fade-in { from { opacity: 0; } to { opacity: 1; } }
   .dp-view-enter { animation: dp-fade-in .18s ease-out; }
   .dp-table-scroll { overflow-x: auto; }
+  .dp-admin-card { min-width: 0; }
+  [aria-modal="true"] { max-width: calc(100vw - 40px) !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: .01ms !important;
+    }
+  }
 
   @media (max-width: 720px) {
     .dp-app-shell { grid-template-columns: 1fr !important; }
@@ -88,11 +117,22 @@
     .dp-sidebar > div:not(:first-child) { flex-shrink: 0; margin-bottom: 0 !important; }
     .dp-sidebar > div[style*="font-size:10.5px"] { display: none; }
     .dp-sidebar-collapse-btn { display: none !important; }
+    .dp-top-header { padding: 16px 12px !important; }
+    .dp-topbar-row { flex-wrap: wrap; }
+    .dp-topbar-row > h1 { flex: 1 1 140px; }
+    .dp-topbar-row > div[style*="flex:1"] { display: none; }
+    .dp-card-actions { flex-wrap: wrap; }
+    .dp-card-actions > span[style*="flex:1"] { display: none; }
+    .dp-admin-layout { padding: 14px 12px 40px !important; }
+    .dp-admin-card { grid-template-columns: 1fr !important; }
+    [aria-modal="true"] { max-width: calc(100vw - 24px) !important; padding:20px 16px !important; }
   }
 </style>
 </head>
 <body>
+<div id="copy-status" data-testid="copy-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
 <div id="app"></div>
+<script src="vendor/supabase.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

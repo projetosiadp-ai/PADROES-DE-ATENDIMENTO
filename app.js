@@ -1,88 +1,40 @@
 // app.js
 import * as api from './api.js';
 import { normalize, matchesSearch, titleSegments as titleSegmentsPure, pickActiveAcesso } from './search-utils.mjs';
+import { normalizeTags, paginateLibraryMessages, selectLibraryMessages } from './domain/library.mjs';
+import { canPublishContent, canUseAccess, canViewAdministration } from './domain/permissions.mjs';
+import { getOrCreateIdempotencyKey, isArchiveRequest, requestTypeLabel } from './domain/requests.mjs';
+import { resolveErrorPolicy } from './domain/error-policy.mjs';
+import { copyExactText } from './ui/clipboard.mjs';
+import { morphChildren } from './ui/dom-morph.mjs';
+import { activateDialogFocus } from './ui/focus.mjs';
+import { renderLibraryOverview, renderLibraryView, renderNoAccessView } from './views/library-view.mjs';
+import { renderAdminConfirmationModal, renderMessageEditorModal, renderMessageRequestModal, renderRequestReviewModal, renderStructuralModals } from './views/modal-view.mjs';
+import { renderAdminView } from './views/admin-view.mjs';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
 
-/* ---------------- DOM morphing ----------------
- * Patches the live tree in place instead of tearing it down and rebuilding it
- * (the old innerHTML-replace-per-keystroke approach). Reusing nodes means the
- * browser never destroys a focused <input>, never restarts CSS animations on
- * unrelated elements, and never has to re-decode/re-layout the whole page —
- * which is what caused the flicker/oscillation while typing.
- */
-const keyOf = (el) => (el.nodeType === Node.ELEMENT_NODE && el.getAttribute) ? el.getAttribute('data-key') : null;
+const CLOSED_CONFIRM = Object.freeze({ open: false, title: '', message: '', action: null, saving: false });
+const CLOSED_REQUEST_MODAL = Object.freeze({
+  open: false, type: null, messageId: null, idempotencyKey: null,
+  form: Object.freeze({ categoryId: '', title: '', tagsText: '', content: '' }),
+  previous: null, error: '', invalid: Object.freeze([]),
+});
+const CLOSED_ACCESS_USERS = Object.freeze({
+  open: false, accessId: null, loading: false, saving: false, users: Object.freeze([]),
+  profiles: Object.freeze([]), selectedId: '', error: '',
+});
+const EMPTY_MSG_FORM = Object.freeze({ categoryId: '', title: '', tagInput: '', tags: Object.freeze([]), content: '' });
 
-function syncAttrs(oldEl, newEl) {
-  const oldAttrs = oldEl.attributes;
-  for (let i = oldAttrs.length - 1; i >= 0; i--) {
-    const name = oldAttrs[i].name;
-    if (!newEl.hasAttribute(name)) oldEl.removeAttribute(name);
-  }
-  const newAttrs = newEl.attributes;
-  for (let i = 0; i < newAttrs.length; i++) {
-    const name = newAttrs[i].name;
-    const value = newAttrs[i].value;
-    if (oldEl.getAttribute(name) !== value) oldEl.setAttribute(name, value);
-  }
-}
-
-function syncFormValue(oldEl, newEl) {
-  const tag = oldEl.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA') {
-    // Never stomp the live value of the field the user is actively typing in
-    // unless it actually differs — setting .value, even to an identical
-    // string, can be enough to disturb the caret in some browsers.
-    if (oldEl.value !== newEl.value) oldEl.value = newEl.value;
-  } else if (tag === 'SELECT') {
-    if (oldEl.value !== newEl.value) oldEl.value = newEl.value;
-  }
-}
-
-function morphNode(oldNode, newNode) {
-  if (oldNode.nodeType !== newNode.nodeType || oldNode.nodeName !== newNode.nodeName) {
-    return newNode.cloneNode(true);
-  }
-  if (oldNode.nodeType === Node.TEXT_NODE || oldNode.nodeType === Node.COMMENT_NODE) {
-    if (oldNode.nodeValue !== newNode.nodeValue) oldNode.nodeValue = newNode.nodeValue;
-    return oldNode;
-  }
-  if (oldNode.nodeType !== Node.ELEMENT_NODE) return oldNode;
-  syncAttrs(oldNode, newNode);
-  syncFormValue(oldNode, newNode);
-  morphChildren(oldNode, newNode);
-  return oldNode;
-}
-
-function morphChildren(oldParent, newParent) {
-  const oldChildren = Array.from(oldParent.childNodes);
-  const newChildren = Array.from(newParent.childNodes);
-  const oldKeyed = new Map();
-  oldChildren.forEach(c => { const k = keyOf(c); if (k) oldKeyed.set(k, c); });
-  const used = new Set();
-
-  for (let i = 0; i < newChildren.length; i++) {
-    const newChild = newChildren[i];
-    const newKey = keyOf(newChild);
-    let match = null;
-    if (newKey && oldKeyed.has(newKey) && !used.has(oldKeyed.get(newKey))) {
-      match = oldKeyed.get(newKey);
-    } else {
-      const candidate = oldChildren[i];
-      if (candidate && !used.has(candidate) && candidate.nodeName === newChild.nodeName && !keyOf(candidate)) {
-        match = candidate;
-      }
-    }
-    const kept = match ? morphNode(match, newChild) : newChild.cloneNode(true);
-    if (match) used.add(match);
-    const ref = oldParent.childNodes[i] || null;
-    if (ref !== kept) oldParent.insertBefore(kept, ref);
-  }
-  while (oldParent.childNodes.length > newChildren.length) {
-    oldParent.removeChild(oldParent.lastChild);
-  }
+// Earlier builds persisted whole libraries in sessionStorage. Content now lives only in memory.
+function purgeLegacyLibraryCache() {
+  try {
+    Object.keys(sessionStorage)
+      .filter(key => key.startsWith('dp_library_cache:'))
+      .forEach(key => sessionStorage.removeItem(key));
+  } catch (e) {}
 }
 
 class App {
@@ -92,9 +44,13 @@ class App {
     this._regN = 0;
     this.searchEl = null;
     this._toastSeq = 0;
-    this._pendingDeleteTimers = new Map();
+    this.libraryCache = new Map(); // accessId -> Promise<{ categories, messages }>, memory only
     this._searchDebounce = null;
     this._adminSearchDebounce = null;
+    this._refreshSequence = 0;
+    this._activeDialog = null;
+    this._dialogFocusCleanup = null;
+    this._dialogOpener = null;
     this.state = this.initialState();
   }
 
@@ -106,16 +62,16 @@ class App {
       sidebarCollapsed: false,
       viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 1280,
       density: 'compact',
-      currentUser: null,     // { user, profile } from api.getSession()
+      currentUser: null,     // { user, profile }
       profileId: null,
       activeAcessoId: null,
       searchQuery: '', searchQueryDraft: '',
+      libraryVisibleLimit: 30,
       searchFocused: false,
       adminSearchQuery: '', adminSearchQueryDraft: '',
       categoryFilter: null,
       copiedId: null,
       expandedCardIds: new Set(),
-      pendingDeleteIds: new Set(),
       saving: false,
       librarySort: 'relevance',
       libraryViewMode: 'grid',
@@ -124,14 +80,19 @@ class App {
       favoriteIds: [],       // mensagem_id[] for the current user
       recentIds: [],         // mensagem_id[] for the current user, most recent first
       toasts: [],
-      confirm: { open: false, title: '', message: '', action: null },
-      showMsgModal: false, editingMsgId: null,
-      msgForm: { categoria: '', titulo: '', tagInput: '', tags: [], conteudo: '' },
-      showCatModal: false, editingCatId: null, catForm: { nome: '' },
-      showAcessoModal: false, acessoForm: { nome: '', descricao: '', cor: '#1BA7DC' },
-      showUsersModal: false, usersModalAcessoId: null,
-      acessoUsers: [], allProfiles: [], addUserSelectedId: '',
-      acessoUsersLoading: false, resetPasswordResult: null, tempPasswordCopiedFor: null,
+      confirm: CLOSED_CONFIRM,
+      showMsgModal: false, editingMsgId: null, msgForm: EMPTY_MSG_FORM, msgError: '', msgInvalid: [],
+      messageRequestModal: CLOSED_REQUEST_MODAL,
+      requestSaving: false,
+      showCatModal: false, editingCatId: null, catForm: { nome: '' }, categoryError: '', categoryInvalid: [],
+      showAcessoModal: false, acessoForm: { nome: '', descricao: '', cor: '#1BA7DC' }, accessError: '', accessInvalid: [],
+      showAccountModal: false,
+      accountForm: { name: '', email: '', temporaryPassword: '', role: 'colaborador', accessIds: new Set() },
+      accountError: '', accountInvalid: [],
+      showMembershipModal: false, membershipUserId: null, membershipDraft: new Set(), membershipError: '',
+      temporaryPassword: { open: false, value: '', copied: false },
+      adminProfiles: [], adminMemberships: [], structuralLoading: false,
+      accessUsersModal: CLOSED_ACCESS_USERS,
       acessos: [],
       acessoMembros: [],
       categorias: [],
@@ -141,11 +102,13 @@ class App {
       approvalPopupSeenThisSession: false,
       showSolicitacaoModal: false, viewingSolicitacaoId: null,
       solicitacaoRejectMode: false, rejectMotivo: '',
+      reviewSaving: false, reviewError: '', reviewInvalid: [],
+      archivedMessages: [], archivedCategories: [], archivedLoading: false,
       loginEmail: '', loginPassword: '', loginError: '', loggingIn: false, showLoginPassword: false
     };
   }
 
-  /* ---------------- render engine (unchanged) ---------------- */
+  /* ---------------- render engine ---------------- */
 
   setState(patch, cb) {
     const next = typeof patch === 'function' ? patch(this.state) : patch;
@@ -161,6 +124,8 @@ class App {
   }
 
   render() {
+    const activeBeforeRender = document.activeElement;
+    const previousDialog = this._activeDialog;
     this._reg = {};
     this._regN = 0;
     const v = this.renderVals();
@@ -170,6 +135,26 @@ class App {
     // focused input/caret, in-flight CSS animations, and scroll position all
     // survive a render untouched.
     morphChildren(this.root, container);
+    if (this.root.querySelector('[data-testid="library-ready"]')) {
+      if (!performance.getEntriesByName('dp-library-ready').length) performance.mark('dp-library-ready');
+      if (this.state.searchQuery && !performance.getEntriesByName('dp-search-ready').length) performance.mark('dp-search-ready');
+    }
+
+    const dialog = this.root.querySelector('[aria-modal="true"]');
+    if (dialog !== previousDialog) {
+      this._dialogFocusCleanup?.();
+      this._dialogFocusCleanup = null;
+      this._activeDialog = dialog;
+      if (dialog) {
+        this._dialogOpener = previousDialog ? this._dialogOpener : activeBeforeRender;
+        this._dialogFocusCleanup = activateDialogFocus(dialog, {
+          opener: this._dialogOpener,
+          escapeCloses: () => !this.isDialogBusy(dialog),
+        });
+      } else {
+        this._dialogOpener = null;
+      }
+    }
 
     this.root.querySelectorAll('[data-ref]').forEach(el => {
       const fn = this._reg[el.getAttribute('data-ref')];
@@ -177,10 +162,20 @@ class App {
     });
   }
 
+  isDialogBusy(dialog = this._activeDialog) {
+    return dialog?.getAttribute('aria-busy') === 'true';
+  }
+
+  focusFirstInvalid() {
+    const dialog = this._activeDialog;
+    const target = (dialog ?? this.root).querySelector('[aria-invalid="true"]:not([disabled])')
+      ?? dialog?.querySelector('input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+    target?.focus();
+  }
+
   /* Delegated listeners, attached once. Each render() only refreshes
    * this._reg and the data-* attribute values (via morph) — never re-attaches
-   * per-node listeners, which used to pile up a new listener on every
-   * keystroke as nodes got recreated. */
+   * per-node listeners. */
   bindDelegatedEvents() {
     const dispatch = (evtName) => (e) => {
       const el = e.target.closest && e.target.closest(`[data-${evtName}]`);
@@ -209,9 +204,11 @@ class App {
   }
 
   async mount() {
+    purgeLegacyLibraryCache();
     try {
       const dm = localStorage.getItem('dp_darkmode'); if (dm) this.state.darkMode = dm === '1';
       const sc = localStorage.getItem('dp_sidebar_collapsed'); if (sc) this.state.sidebarCollapsed = sc === '1';
+      const activeAccess = localStorage.getItem('dp_active_acesso'); if (activeAccess) this.state.activeAcessoId = activeAccess;
     } catch (e) {}
 
     this.render();
@@ -227,8 +224,13 @@ class App {
 
     api.onAuthChange(async (session) => {
       if (!session) {
+        this._refreshSequence++;
+        this.libraryCache.clear();
         const { darkMode, density, sidebarCollapsed } = this.state;
-        this.setState({ ...this.initialState(), darkMode, density, sidebarCollapsed, loading: false });
+        this.setState({
+          ...this.initialState(), darkMode, density, sidebarCollapsed, loading: false,
+          loginError: api.consumeSessionExpiredNotice() ? 'Sua sessão expirou. Entre novamente.' : '',
+        });
         return;
       }
       await this.refreshAppData(session);
@@ -239,14 +241,15 @@ class App {
       if (session) await this.refreshAppData(session);
       else this.setState({ loading: false });
     } catch (e) {
-      this.setState({ loading: false, loadError: e.message });
+      this.setState({ loading: false, loadError: resolveErrorPolicy(e).message });
     }
 
     this._keyHandler = (e) => {
       const st = this.state;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        this.setState({ paletteOpen: !st.paletteOpen, paletteQuery: '', paletteIndex: 0 });
+        if (st.currentUser && !this._activeDialog) this.setState({ paletteOpen: true, paletteQuery: '', paletteIndex: 0 });
+        else if (st.paletteOpen) this.setState({ paletteOpen: false });
         return;
       }
       if (st.paletteOpen) {
@@ -258,18 +261,24 @@ class App {
         return;
       }
       const typing = /INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || '');
-      if (e.key === '/' && !typing && st.currentUser) {
+      if (e.key === '/' && !typing && st.currentUser && !this._activeDialog) {
         e.preventDefault();
         if (this.searchEl) this.searchEl.focus();
       } else if (e.key === 'Escape') {
+        // A dialog with an operation in flight stays open until the operation settles.
+        if (this.isDialogBusy()) { e.preventDefault(); return; }
         if (st.showPreviewModal) this.setState({ showPreviewModal: false });
-        else if (st.showMsgModal) this.setState({ showMsgModal: false });
-        else if (st.showCatModal) this.setState({ showCatModal: false });
-        else if (st.showAcessoModal) this.setState({ showAcessoModal: false });
-        else if (st.showUsersModal) this.setState({ showUsersModal: false });
-        else if (st.showSolicitacaoModal) this.setState({ showSolicitacaoModal: false, solicitacaoRejectMode: false });
+        else if (st.confirm.open) this.closeConfirm();
+        else if (st.temporaryPassword.open) this.closeTemporaryPassword();
+        else if (st.messageRequestModal.open) this.closeMessageRequest();
+        else if (st.showMsgModal) this.closeMsgModal();
+        else if (st.showCatModal) this.closeCatModal();
+        else if (st.showAcessoModal) this.closeAccessModal();
+        else if (st.showAccountModal) this.closeAccountModal();
+        else if (st.showMembershipModal) this.closeMembershipModal();
+        else if (st.accessUsersModal.open) this.closeAccessUsers();
+        else if (st.showSolicitacaoModal) this.closeReview();
         else if (st.showApprovalPopup) this.setState({ showApprovalPopup: false });
-        else if (st.confirm.open) this.setState({ confirm: { open: false, title: '', message: '', action: null } });
         else if (st.userMenuOpen) this.setState({ userMenuOpen: false });
         else if (st.searchQuery || st.searchQueryDraft) { clearTimeout(this._searchDebounce); this.setState({ searchQuery: '', searchQueryDraft: '' }); }
       }
@@ -277,35 +286,237 @@ class App {
     window.addEventListener('keydown', this._keyHandler);
   }
 
+  /* ---------------- roles, accesses and data loading ---------------- */
+
+  role() { return this.state.currentUser?.profile?.role; }
+  isSuperAdmin() { return canViewAdministration(this.role()); }
+
+  usableAccesses(profile = this.state.currentUser?.profile, accesses = this.state.acessos, memberships = this.state.acessoMembros) {
+    if (!profile) return [];
+    return accesses.filter(access => canUseAccess({ profile, access, memberships }));
+  }
+
+  activeAccess() {
+    return pickActiveAcesso(this.usableAccesses(), this.state.activeAcessoId);
+  }
+
   async refreshAppData(session) {
-    // `session` may be a raw Supabase session ({ user }) on first load/login,
-    // or the already-shaped { user, profile } from state on a data refresh —
-    // both carry .user, which is all fetchAppData needs.
+    const refreshSequence = ++this._refreshSequence;
+    const userId = session.user.id;
     try {
-      const data = await api.fetchAppData(session.user.id);
-      const firstAcessoId = data.acessos[0] ? data.acessos[0].id : null;
-      const isSuperAdmin = data.profile.role === 'superadmin';
-      const solicitacoesPendentes = isSuperAdmin ? await api.listarSolicitacoesPendentes() : [];
+      const requestedAccessId = this.state.activeAcessoId;
+      const contextPromise = api.fetchSessionContext(userId);
+      const prefetchedLibrary = requestedAccessId
+        ? this.fetchLibrary(requestedAccessId).then(value => ({ value }), error => ({ error }))
+        : null;
+      const context = await contextPromise;
+      const activeAcesso = pickActiveAcesso(
+        this.usableAccesses(context.profile, context.accesses, context.memberships),
+        requestedAccessId,
+      );
+      const activeAcessoId = activeAcesso?.id ?? null;
+      let library = { categories: [], messages: [] };
+      if (activeAcessoId) {
+        if (activeAcessoId === requestedAccessId && prefetchedLibrary) {
+          const result = await prefetchedLibrary;
+          if (result.error) throw result.error;
+          library = result.value;
+        } else {
+          library = await this.fetchLibrary(activeAcessoId);
+        }
+      }
+      const isSuperAdmin = canViewAdministration(context.profile.role);
+      const solicitacoesPendentes = isSuperAdmin ? await api.listPendingRequests() : [];
       const shouldPopup = isSuperAdmin && solicitacoesPendentes.length > 0 && !this.state.approvalPopupSeenThisSession;
+      if (refreshSequence !== this._refreshSequence) return;
+      const keepPersonalization = this.state.currentUser?.user?.id === userId && this.state.activeAcessoId === activeAcessoId;
       this.setState({
-        currentUser: { user: session.user, profile: data.profile },
-        profileId: session.user.id,
-        acessos: data.acessos,
-        acessoMembros: data.acessoMembros,
-        categorias: data.categorias,
-        mensagens: data.mensagens,
-        favoriteIds: data.favoritos.map(f => f.mensagem_id),
-        recentIds: data.recentes.map(r => r.mensagem_id),
-        activeAcessoId: this.state.activeAcessoId && data.acessos.some(a => a.id === this.state.activeAcessoId)
-          ? this.state.activeAcessoId : firstAcessoId,
+        currentUser: { user: session.user, profile: context.profile },
+        profileId: userId,
+        acessos: context.accesses,
+        acessoMembros: context.memberships,
+        categorias: library.categories,
+        mensagens: library.messages,
+        favoriteIds: keepPersonalization ? this.state.favoriteIds : [],
+        recentIds: keepPersonalization ? this.state.recentIds : [],
+        activeAcessoId,
         solicitacoesPendentes,
         showApprovalPopup: shouldPopup,
         approvalPopupSeenThisSession: this.state.approvalPopupSeenThisSession || shouldPopup,
         loading: false, loadError: ''
       });
-    } catch (e) {
-      this.setState({ loading: false, loadError: e.message, loggingIn: false, loginError: e.message });
-      this.showToast(e.message, 'error');
+      if (activeAcessoId) setTimeout(() => {
+        void this.hydrateLibraryPersonalization(userId, activeAcessoId, refreshSequence);
+      }, 2_500);
+    } catch (error) {
+      if (refreshSequence !== this._refreshSequence) return;
+      this.setState({ loading: false, loggingIn: false });
+      if (this.state.currentUser) { await this.handleError(error, { refresh: false }); return; }
+      const policy = resolveErrorPolicy(error);
+      if (policy.clearSession) { await api.expireSession(); return; }
+      this.setState({ loadError: policy.message, loginError: policy.message });
+    }
+  }
+
+  // In-flight requests are shared, so the bootstrap prefetch and later reads never race.
+  fetchLibrary(accessId) {
+    if (!this.libraryCache.has(accessId)) {
+      const pending = api.fetchAccessLibraryCore(accessId);
+      this.libraryCache.set(accessId, pending);
+      pending.catch(() => {
+        if (this.libraryCache.get(accessId) === pending) this.libraryCache.delete(accessId);
+      });
+    }
+    return this.libraryCache.get(accessId);
+  }
+
+  // Invalidates one access and, when it is on screen, reloads only its library.
+  async reloadLibrary(accessId = this.state.activeAcessoId) {
+    if (!accessId) return;
+    this.libraryCache.delete(accessId);
+    if (accessId !== this.state.activeAcessoId) return;
+    try {
+      const library = await this.fetchLibrary(accessId);
+      if (accessId !== this.state.activeAcessoId) return;
+      this.setState({ categorias: library.categories, mensagens: library.messages });
+    } catch (error) {
+      await this.handleError(error, { refresh: false });
+    }
+  }
+
+  async reloadPendingRequests() {
+    if (!this.isSuperAdmin()) return;
+    try {
+      this.setState({ solicitacoesPendentes: await api.listPendingRequests() });
+    } catch (error) {
+      await this.handleError(error, { refresh: false });
+    }
+  }
+
+  // Default refresh for NOT_FOUND/CONFLICT: the collections currently on screen.
+  async reloadActiveContext() {
+    const st = this.state;
+    const inAdmin = st.appView === 'admin';
+    await Promise.all([
+      this.reloadLibrary(),
+      this.reloadPendingRequests(),
+      inAdmin && st.adminTab === 'arquivados' ? this.loadArchivedContent() : null,
+      inAdmin && (st.adminTab === 'acessos' || st.adminTab === 'contas') ? this.loadStructuralAdmin() : null,
+      st.accessUsersModal.open ? this.loadAccessUsers(st.accessUsersModal.accessId) : null,
+    ]);
+  }
+
+  async hydrateLibraryPersonalization(userId, accessId, refreshSequence = this._refreshSequence) {
+    try {
+      const personalization = await api.fetchAccessPersonalization(userId, accessId);
+      if (refreshSequence !== this._refreshSequence || accessId !== this.state.activeAcessoId) return;
+      this.setState(personalization);
+    } catch (error) {
+      if (refreshSequence === this._refreshSequence) await this.handleError(error, { refresh: false });
+    }
+  }
+
+  // Entering Administration and switching tabs both ask for this data; share one load in flight.
+  loadStructuralAdmin() {
+    if (!this.isSuperAdmin()) return Promise.resolve();
+    this._structuralLoad ??= this.fetchStructuralAdmin().finally(() => { this._structuralLoad = null; });
+    return this._structuralLoad;
+  }
+
+  async fetchStructuralAdmin() {
+    this.setState({ structuralLoading: true });
+    try {
+      const [profiles, accessUsers] = await Promise.all([
+        api.listProfiles(),
+        Promise.all(this.state.acessos.map(async access => ({
+          accessId: access.id,
+          users: await api.listAccessUsers(access.id),
+        }))),
+      ]);
+      const memberships = accessUsers.flatMap(({ accessId, users }) => users.map(user => ({
+        userId: user.userId,
+        accessId,
+      })));
+      this.setState({ adminProfiles: profiles, adminMemberships: memberships, structuralLoading: false });
+    } catch (error) {
+      this.setState({ structuralLoading: false });
+      await this.handleError(error, { refresh: false });
+    }
+  }
+
+  async changeActiveAccess(accessId) {
+    const currentUser = this.state.currentUser;
+    if (!currentUser || accessId === this.state.activeAcessoId) return;
+    const refreshSequence = ++this._refreshSequence;
+    try { localStorage.setItem('dp_active_acesso', accessId); } catch (e) {}
+    this.setState({ activeAcessoId: accessId, categoryFilter: null, libraryVisibleLimit: 30, loading: true });
+    try {
+      const library = await this.fetchLibrary(accessId);
+      if (refreshSequence !== this._refreshSequence) return;
+      this.setState({
+        categorias: library.categories,
+        mensagens: library.messages,
+        favoriteIds: [],
+        recentIds: [],
+        loading: false,
+      });
+      void this.hydrateLibraryPersonalization(currentUser.user.id, accessId, refreshSequence);
+      if (this.state.adminTab === 'arquivados') await this.loadArchivedContent(accessId);
+    } catch (error) {
+      this.setState({ loading: false });
+      await this.handleError(error, { refresh: false });
+    }
+  }
+
+  /* ---------------- errors and confirmation ---------------- */
+
+  /* Single place that turns an AppError code into UI behavior (domain/error-policy.mjs):
+   * AUTH_REQUIRED clears the session; FORBIDDEN keeps data and closes the prompt; NOT_FOUND
+   * closes the stale detail and refreshes; CONFLICT keeps the form and refreshes; VALIDATION
+   * keeps the form and focuses the first invalid field; NETWORK keeps input and offers retry. */
+  async handleError(error, { setFormError = null, closeDetail = null, retry = null, refresh, messages = {} } = {}) {
+    const policy = resolveErrorPolicy(error, messages);
+    if (policy.clearSession) {
+      await api.expireSession();
+      return policy;
+    }
+    if (policy.closePrompt) this.closeConfirm(true);
+    if (policy.closeDetail && closeDetail) closeDetail();
+    if (setFormError && !(policy.closeDetail && closeDetail)) {
+      setFormError(policy.message);
+    } else {
+      const action = policy.offerRetry && retry ? { label: 'Tentar novamente', onClick: retry } : null;
+      this.showToast(policy.message, 'error', '', action);
+    }
+    if (policy.focusInvalid) this.focusFirstInvalid();
+    if (policy.refresh && refresh !== false) {
+      try {
+        await (refresh ?? (() => this.reloadActiveContext()))();
+      } catch (refreshError) {
+        console.warn('Falha ao recarregar o estado após erro', refreshError);
+      }
+    }
+    return policy;
+  }
+
+  requestConfirmation(title, message, action) {
+    this.setState({ confirm: { open: true, title, message, action, saving: false } });
+  }
+
+  closeConfirm(force = false) {
+    if (!force && this.state.confirm.saving) return;
+    if (this.state.confirm.open) this.setState({ confirm: CLOSED_CONFIRM });
+  }
+
+  // The prompt stays open, busy and unclickable until the action settles (FR-026).
+  async runConfirm() {
+    const confirm = this.state.confirm;
+    if (!confirm.open || confirm.saving || typeof confirm.action !== 'function') return;
+    this.setState({ confirm: { ...confirm, saving: true } });
+    try {
+      await confirm.action();
+    } finally {
+      this.closeConfirm(true);
     }
   }
 
@@ -319,30 +530,35 @@ class App {
   /* Shared by the message cards, the "Visão geral" panels and the command
    * palette, all of which need to copy a message + record usage the same way. */
   getActiveAcessoMsgs() {
-    const st = this.state;
-    if (!st.currentUser) return [];
-    const activeAcesso = pickActiveAcesso(st.acessos, st.activeAcessoId);
-    if (!activeAcesso) return [];
-    return st.mensagens.filter(m => m.acesso_id === activeAcesso.id && !st.pendingDeleteIds.has(m.id));
+    const activeAcesso = this.activeAccess();
+    return activeAcesso ? this.state.mensagens.filter(m => m.acesso_id === activeAcesso.id) : [];
   }
-  copyMessage(msg) {
-    const session = this.state.currentUser;
-    const profile = session.profile;
-    navigator.clipboard && navigator.clipboard.writeText(msg.conteudo).catch(() => {});
-    this.setState({ copiedId: msg.id });
-    setTimeout(() => this.setState({ copiedId: null }), 1400);
-    this.showToast(`"${msg.titulo}" copiada!`, 'success', msg.conteudo, null, 3000);
-    // Ação mais frequente do app (todo clique em Copiar) — patch local em vez
-    // de refreshAppData() completo, que refaria a consulta do banco inteiro
-    // (todos os Acessos/categorias/mensagens) só pra refletir 1 incremento.
-    Promise.all([api.incrementFrequencia(msg.id), api.recordRecente(profile.id, msg.id)])
-      .then(() => {
+  async copyMessage(msg) {
+    const profile = this.state.currentUser.profile;
+    const result = await copyExactText(msg.conteudo, {
+      telemetry: () => api.recordMessageUse(profile.id, msg.id).then(() => {
         this.setState(s => ({
           mensagens: s.mensagens.map(m => m.id === msg.id ? { ...m, frequencia: m.frequencia + 1 } : m),
           recentIds: [msg.id, ...s.recentIds.filter(id => id !== msg.id)].slice(0, 5)
         }));
-      })
-      .catch(e => this.showToast(e.message, 'error'));
+        this.libraryCache.delete(msg.acesso_id);
+      }),
+      onTelemetryError: (error) => console.warn('Falha ao registrar uso da mensagem', error),
+    });
+    if (!result.copied) {
+      this.showToast('Selecione o texto e copie manualmente', 'error');
+      return;
+    }
+    this.setState({ copiedId: msg.id });
+    performance.clearMarks('dp-copy-ready');
+    performance.mark('dp-copy-ready');
+    const copyStatus = document.getElementById('copy-status');
+    if (copyStatus) {
+      copyStatus.textContent = '';
+      requestAnimationFrame(() => { copyStatus.textContent = 'Mensagem copiada'; });
+    }
+    setTimeout(() => this.setState({ copiedId: null }), 1400);
+    this.showToast('Mensagem copiada', 'success', '', null, 3000);
   }
   paletteList() {
     const q = this.state.paletteQuery.trim();
@@ -360,7 +576,7 @@ class App {
     return {
       // Legacy aliases kept so every existing call site keeps working —
       // only the underlying values change for the redesign.
-      navy: dark ? '#2B62D6' : '#16336E', cyan: dark ? '#4CC3FF' : '#0E93D8',
+      navy: dark ? '#2B62D6' : '#16336E', cyan: dark ? '#4CC3FF' : '#09679F',
       pageBg: dark ? '#0B1428' : '#EEF2F9',
       cardBg: dark ? '#141F3D' : '#FFFFFF',
       modalSolidBg: dark ? '#1A2748' : '#FFFFFF',
@@ -370,7 +586,7 @@ class App {
       inputBg: dark ? '#141F3D' : '#F1F5FB',
       text: dark ? '#DCE4F5' : '#111F3F',
       textSecondary: dark ? '#A3B3D4' : '#54678C',
-      textTertiary: dark ? '#5F7199' : '#93A6C4',
+      textTertiary: dark ? '#9AAACC' : '#586A8D',
       border: dark ? '#243456' : '#DDE6F2',
       border2: dark ? '#2C3F6B' : '#CBD9EA',
       radiusSm: '12px',
@@ -384,7 +600,7 @@ class App {
 
       // New tokens for the redesign.
       panel: dark ? 'rgba(20,31,61,0.75)' : 'rgba(255,255,255,0.75)',
-      accent: dark ? '#4CC3FF' : '#0E93D8',
+      accent: dark ? '#4CC3FF' : '#09679F',
       accentSoft: dark ? 'rgba(76,195,255,0.13)' : 'rgba(14,147,216,0.11)',
       brand: dark ? '#2B62D6' : '#16336E',
       brand2: dark ? '#3A74EA' : '#1E4290',
@@ -392,7 +608,7 @@ class App {
       glow: dark ? '0 8px 26px -8px rgba(57,181,245,0.22)' : '0 8px 24px -8px rgba(14,147,216,0.45)',
       ok: dark ? '#34D399' : '#0E9F6E',
       okSoft: dark ? 'rgba(52,211,153,0.13)' : 'rgba(16,185,129,0.13)',
-      danger: dark ? '#FF7B7B' : '#D64545',
+      danger: dark ? '#FF7B7B' : '#B82D2D',
       dangerSoft: dark ? 'rgba(255,123,123,0.13)' : 'rgba(214,69,69,0.11)',
       toastBg: dark ? '#E9EFFB' : '#111F3F',
       toastInk: dark ? '#111F3F' : '#F2F7FD',
@@ -454,7 +670,7 @@ class App {
     const ms = duration || (body || action ? 6000 : 3000);
     const toast = { id, msg, type: type || 'success', body: body || '', action: action || null, duration: ms, bg: type === 'error' ? t.danger : t.toastBg, ink: type === 'error' ? '#fff' : t.toastInk };
     const MAX_VISIBLE = 4;
-    this.setState(s => ({ toasts: [...s.toasts, toast].slice(-MAX_VISIBLE) }));
+    this.setState(s => ({ toasts: [...s.toasts.filter(item => item.msg !== toast.msg), toast].slice(-MAX_VISIBLE) }));
     setTimeout(() => this.setState(s => ({ toasts: s.toasts.filter(x => x.id !== id) })), ms);
   }
   dismissToast(id) {
@@ -463,16 +679,14 @@ class App {
 
   /* ---------------- computed bindings ---------------- */
 
+  roleLabel(role) { return canViewAdministration(role) ? 'Superadministrador' : 'Colaborador'; }
+
   renderVals() {
     const st = this.state;
     const theme = this.theme();
     const session = st.currentUser;
 
-    if (st.loading) {
-      return { isLogin: false, isApp: false, isLoading: true, theme, confirm: st.confirm, toasts: st.toasts,
-        showMsgModal: false, showCatModal: false, showAcessoModal: false, showUsersModal: false,
-        showPreviewModal: false, paletteOpen: false, showSolicitacaoModal: false, showApprovalPopup: false };
-    }
+    if (st.loading) return { isLogin: false, isApp: false, isLoading: true, theme, toasts: st.toasts };
 
     if (!session) {
       return {
@@ -486,45 +700,37 @@ class App {
         onToggleLoginPassword: () => this.setState({ showLoginPassword: !st.showLoginPassword }),
         handleLogin: () => this.handleLogin(),
         onLoginKeyDown: (e) => { if (e.key === 'Enter') this.handleLogin(); },
-        noop: (e) => e.preventDefault(),
-        confirm: st.confirm, toasts: st.toasts,
-        showMsgModal: false, showCatModal: false, showAcessoModal: false, showUsersModal: false
+        toasts: st.toasts,
       };
     }
 
     const profile = session.profile;
-    const activeAcesso = pickActiveAcesso(st.acessos, st.activeAcessoId);
+    const activeAcesso = this.activeAccess();
     if (!activeAcesso) {
       return {
         isLogin: false, isApp: false, isNoAcesso: true, isLoading: false, theme,
         noAcessoNome: profile.nome,
         logout: () => this.logout(),
-        confirm: st.confirm, toasts: st.toasts,
-        showMsgModal: false, showCatModal: false, showAcessoModal: false, showUsersModal: false,
-        showPreviewModal: false, paletteOpen: false, showSolicitacaoModal: false, showApprovalPopup: false
+        toasts: st.toasts,
       };
     }
-    const acessoMsgs = st.mensagens.filter(m => m.acesso_id === activeAcesso.id && !st.pendingDeleteIds.has(m.id));
-    const acessoCats = st.categorias.filter(c => c.acesso_id === activeAcesso.id && !st.pendingDeleteIds.has(c.id));
-    const isSuperAdmin = profile.role === 'superadmin';
-    // Superadmin pode alternar entre TODOS os Acessos ativos (não só os que tem
-    // vínculo em acesso_membros) — senão um Acesso recém-criado nunca apareceria
-    // no seletor para ser gerenciado.
-    const userAcessoLinks = isSuperAdmin
-      ? st.acessos.filter(a => a.ativo).map(a => ({ acesso_id: a.id }))
-      : st.acessoMembros.filter(m => {
-          const acc = st.acessos.find(a => a.id === m.acesso_id);
-          return acc && acc.ativo;
-        });
-    const localAdminEntry = st.acessoMembros.find(m => m.acesso_id === activeAcesso.id);
-    const isAdmin = isSuperAdmin || (localAdminEntry && localAdminEntry.is_admin_local);
+
+    const isSuperAdmin = canViewAdministration(profile.role);
+    const canPublish = canPublishContent(profile.role);
+    const acessoMsgs = st.mensagens.filter(m => m.acesso_id === activeAcesso.id);
+    const acessoCats = st.categorias.filter(c => c.acesso_id === activeAcesso.id);
+    const categoryNames = new Map(acessoCats.map(c => [c.id, c.nome]));
+    const categoryName = (m) => categoryNames.get(m.categoria_id) ?? m.categoria ?? '';
+    const accessOptions = this.usableAccesses();
 
     const copyMessage = (msg) => this.copyMessage(msg);
     const toggleFav = (id) => {
       const isFav = st.favoriteIds.includes(id);
-      api.toggleFavorito(profile.id, id, isFav)
-        .then(() => this.refreshAppData(session))
-        .catch(e => this.showToast(e.message, 'error'));
+      api.toggleFavorite(profile.id, id, isFav)
+        .then(() => this.setState(s => ({
+          favoriteIds: isFav ? s.favoriteIds.filter(favoriteId => favoriteId !== id) : [...s.favoriteIds, id],
+        })))
+        .catch(error => this.handleError(error));
     };
     const openPreview = (msg) => this.setState({ showPreviewModal: true, previewingMsgId: msg.id });
     const toggleExpand = (id) => {
@@ -538,15 +744,16 @@ class App {
       const isFav = st.favoriteIds.includes(m.id);
       const isLong = m.conteudo.length > 130 || (m.conteudo.match(/\n/g) || []).length >= 3;
       const isExpanded = st.expandedCardIds.has(m.id);
+      const name = categoryName(m);
       return {
-        id: m.id, categoria: m.categoria,
-        catColor: this.categoryColor(m.categoria),
-        catIcon: this.categoryIcon(m.categoria),
+        id: m.id, categoria: name, titleText: m.titulo,
+        catColor: this.categoryColor(name),
+        catIcon: this.categoryIcon(name),
         titleSegments: this.titleSegments(m.titulo, st.searchQuery),
         displayContent: m.conteudo,
         isLong, isExpanded, onToggleExpand: () => toggleExpand(m.id),
         heatWidth: Math.round(100 * m.frequencia / maxFrequencia),
-        tagChips: m.tags.map(tag => ({ label: tag, onClick: () => this.setState({ searchQuery: tag }) })),
+        tagChips: m.tags.map(tag => ({ label: tag, onClick: () => this.setState({ searchQuery: tag, searchQueryDraft: tag }) })),
         frequencia: m.frequencia,
         isFav, favColor: isFav ? '#F5A623' : theme.textTertiary,
         onToggleFav: () => toggleFav(m.id),
@@ -556,13 +763,19 @@ class App {
         copyBtnBg: st.copiedId === m.id ? theme.ok : theme.brand,
         onPreview: () => openPreview(m),
         onEdit: () => this.openEditMsg(m),
-        onDelete: () => this.requestDeleteMsg(m),
+        onArchive: () => this.requestArchiveMessage(m),
+        editLabel: canPublish ? 'Editar' : 'Sugerir edição',
+        archiveLabel: canPublish ? 'Arquivar' : 'Solicitar arquivamento',
         borderColor: theme.border
       };
     };
 
-    const acessoMsgsFilteredByCategory = acessoMsgs.filter(m => !st.categoryFilter || m.categoria === st.categoryFilter);
-    let filtered = acessoMsgsFilteredByCategory.filter(m => this.matchesSearch(m, st.searchQuery));
+    const sortBy = st.librarySort === 'az' ? 'alfabetica' : st.librarySort === 'used' ? 'frequencia' : 'relevancia';
+    const filtered = selectLibraryMessages(acessoMsgs, {
+      query: st.searchQuery,
+      categoryId: st.categoryFilter,
+      sortBy,
+    });
     const q = st.searchQuery.trim().toLowerCase();
     if (q) {
       filtered.sort((a, b) => {
@@ -571,36 +784,25 @@ class App {
         if (aExact !== bExact) return bExact - aExact;
         return b.frequencia - a.frequencia;
       });
-    } else if (st.librarySort === 'az') {
-      filtered.sort((a, b) => a.titulo.localeCompare(b.titulo));
-    } else if (st.librarySort === 'used') {
-      filtered.sort((a, b) => b.frequencia - a.frequencia);
-    } else {
+    } else if (st.librarySort === 'relevance') {
       filtered.sort((a, b) => (st.favoriteIds.includes(b.id) ? 1 : 0) - (st.favoriteIds.includes(a.id) ? 1 : 0) || b.frequencia - a.frequencia);
     }
+    const libraryPage = paginateLibraryMessages(filtered, st.libraryVisibleLimit);
 
-    const acessoMsgsInCategory = acessoMsgs.filter(m => !st.categoryFilter || m.categoria === st.categoryFilter);
+    const acessoMsgsInCategory = acessoMsgs.filter(m => !st.categoryFilter || m.categoria_id === st.categoryFilter);
     const miniRowData = (m) => ({
-      titulo: m.titulo, catInitial: m.categoria.charAt(0).toUpperCase(), catColor: this.categoryColor(m.categoria),
-      catIcon: this.categoryIcon(m.categoria), categoria: m.categoria, usedLabel: `${m.frequencia}x`,
-      onCopy: () => copyMessage(m), copied: st.copiedId === m.id, copyLabel: st.copiedId === m.id ? 'Copiado' : 'Copiar'
+      titulo: m.titulo, categoria: categoryName(m),
+      onCopy: () => copyMessage(m), copied: st.copiedId === m.id,
     });
-    const rankColors = ['#E8A10B', '#9AA7BD', '#C77B46', theme.textTertiary, theme.textTertiary];
-    const topUsedSource = [...acessoMsgsInCategory].sort((a, b) => b.frequencia - a.frequencia).slice(0, 5);
-    const maxTopUsed = Math.max(1, ...topUsedSource.map(m => m.frequencia));
-    const mostUsed = topUsedSource.map((m, i) => ({
-      ...miniRowData(m), rank: i + 1, rankColor: rankColors[i] || theme.textTertiary,
-      barWidth: Math.round(100 * m.frequencia / maxTopUsed)
-    }));
     const recentList = st.recentIds.map(id => acessoMsgsInCategory.find(m => m.id === id)).filter(Boolean).map(miniRowData);
     const favList = st.favoriteIds.map(id => acessoMsgsInCategory.find(m => m.id === id)).filter(Boolean).map(miniRowData);
 
     const categoriaChips = acessoCats.map(c => ({
       nome: c.nome,
-      count: acessoMsgs.filter(m => m.categoria === c.nome).length,
+      count: acessoMsgs.filter(m => m.categoria_id === c.id).length,
       icon: this.categoryIcon(c.nome), color: this.categoryColor(c.nome),
-      active: st.categoryFilter === c.nome,
-      onClick: () => this.setState({ categoryFilter: st.categoryFilter === c.nome ? null : c.nome, appView: 'biblioteca' })
+      active: st.categoryFilter === c.id,
+      onClick: () => this.setState({ categoryFilter: st.categoryFilter === c.id ? null : c.id, appView: 'biblioteca' })
     }));
 
     const density = st.density;
@@ -611,102 +813,106 @@ class App {
     const hour = new Date().getHours();
     const firstName = (profile.nome || '').split(' ')[0] || '';
     const heroGreeting = (hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite') + (firstName ? `, ${firstName}!` : '!');
-    const heroStats = [
-      { value: acessoMsgs.length, label: 'MENSAGENS' },
-      { value: acessoMsgs.reduce((a, m) => a + m.frequencia, 0), label: 'CÓPIAS' },
-      { value: acessoMsgs.filter(m => st.favoriteIds.includes(m.id)).length, label: 'FAVORITAS' }
-    ];
 
     const adminQ = st.adminSearchQuery.trim().toLowerCase();
     const adminMsgRows = acessoMsgs.filter(m => !adminQ || m.titulo.toLowerCase().includes(adminQ) || m.conteudo.toLowerCase().includes(adminQ))
       .map(m => ({
-        id: m.id, categoria: m.categoria, titulo: m.titulo, conteudo: m.conteudo, tagsLabel: m.tags.join(', '), frequencia: m.frequencia,
+        id: m.id, categoria: categoryName(m), titulo: m.titulo, conteudo: m.conteudo,
         onEdit: () => this.openEditMsg(m),
-        onDelete: () => this.requestDelete('Excluir mensagem', `Tem certeza que deseja excluir "${m.titulo}"? Esta ação não pode ser desfeita.`, () => this.deleteMsg(m.id))
+        onArchive: () => this.requestArchiveMessage(m),
       }));
 
     const catRows = acessoCats.map(c => ({
       id: c.id, nome: c.nome,
-      countLabel: acessoMsgs.filter(m => m.categoria === c.nome).length + ' mensagens',
+      countLabel: acessoMsgs.filter(m => m.categoria_id === c.id).length + ' mensagens',
       onEdit: () => this.openEditCat(c),
-      onDelete: () => this.requestDelete('Excluir categoria', `Excluir a categoria "${c.nome}"? As mensagens vinculadas manterão o nome, mas o filtro será removido.`, () => this.deleteCat(c.id))
+      onArchive: () => this.requestArchiveCategory(c),
     }));
 
     const acessoRows = st.acessos.map(a => {
-      const linkedCount = st.acessoMembros.filter(m => m.acesso_id === a.id).length;
+      const linkedCount = st.adminMemberships.filter(m => m.accessId === a.id).length;
       const msgCount = st.mensagens.filter(m => m.acesso_id === a.id).length;
       return {
-        id: a.id, nome: a.nome, cor: a.cor, initial: a.nome.charAt(0).toUpperCase(),
+        id: a.id, nome: a.nome,
         statsLabel: `${msgCount} mensagens · ${linkedCount} usuários`,
         statusLabel: a.ativo ? 'Ativo' : 'Inativo',
-        statusBg: a.ativo ? theme.okSoft : theme.dangerSoft, statusColor: a.ativo ? theme.ok : theme.danger,
         toggleLabel: a.ativo ? 'Desativar' : 'Ativar',
-        onToggleStatus: () => this.toggleAcessoStatus(a.id, a.ativo),
-        onUsers: () => this.openUsersModal(a.id)
+        onToggleStatus: () => a.ativo
+          ? this.requestConfirmation('Desativar acesso', `Desativar o acesso "${a.nome}"? Colaboradores vinculados deixarão de visualizar seu conteúdo.`, () => this.setAccessStatus(a.id, false))
+          : this.setAccessStatus(a.id, true),
+        onUsers: () => this.openAccessUsers(a.id)
       };
     });
 
-    const msgFormTagChips = st.msgForm.tags.map((t, i) => ({
-      label: t, onRemove: () => this.setState(s => ({ msgForm: { ...s.msgForm, tags: s.msgForm.tags.filter((_, idx) => idx !== i) } }))
-    }));
+    const accountRows = st.adminProfiles.map(account => {
+      const membershipCount = st.adminMemberships.filter(membership => membership.userId === account.id).length;
+      return {
+        id: account.id,
+        name: account.nome,
+        email: account.email,
+        roleLabel: this.roleLabel(account.role),
+        membershipLabel: `${membershipCount} ${membershipCount === 1 ? 'acesso' : 'acessos'}`,
+        onMemberships: () => this.openMembershipModal(account.id),
+        onResetPassword: () => this.requestResetPassword({ userId: account.id, name: account.nome, email: account.email }),
+      };
+    });
 
-    const appView = (st.appView === 'admin' && !isAdmin) ? 'biblioteca' : (st.appView || 'biblioteca');
+    const appView = (st.appView === 'admin' && !isSuperAdmin) ? 'biblioteca' : (st.appView || 'biblioteca');
     const pageTitles = { biblioteca: 'Biblioteca de mensagens', visaogeral: 'Visão geral', admin: 'Administração' };
+    const adminTab = st.adminTab || 'mensagens';
+    const pendingRequest = st.solicitacoesPendentes.find(item => item.id === st.viewingSolicitacaoId);
+    const previewing = acessoMsgs.find(x => x.id === st.previewingMsgId);
+    const accessUsers = st.accessUsersModal;
 
     return {
       isLogin: false, isApp: true, isLoading: false, theme,
       appView,
       pageTitle: pageTitles[appView],
       isLib: appView === 'biblioteca', isOver: appView === 'visaogeral', isAdminView: appView === 'admin',
-      adminTab: st.adminTab || 'mensagens',
-      isAdminMsgs: (st.adminTab || 'mensagens') === 'mensagens', isAdminCats: st.adminTab === 'categorias', isAdminAcessos: st.adminTab === 'acessos',
-      isAdminSolicitacoes: st.adminTab === 'solicitacoes',
-      adminMsgsNarrow: st.viewportWidth < 900, adminSolicNarrow: st.viewportWidth < 700,
-      tabMsgsBg: (st.adminTab || 'mensagens') === 'mensagens' ? theme.navy : 'transparent', tabMsgsColor: (st.adminTab || 'mensagens') === 'mensagens' ? '#fff' : theme.text,
-      tabCatsBg: st.adminTab === 'categorias' ? theme.navy : 'transparent', tabCatsColor: st.adminTab === 'categorias' ? '#fff' : theme.text,
-      tabAcessosBg: st.adminTab === 'acessos' ? theme.navy : 'transparent', tabAcessosColor: st.adminTab === 'acessos' ? '#fff' : theme.text,
-      tabSolicitacoesBg: st.adminTab === 'solicitacoes' ? theme.navy : 'transparent', tabSolicitacoesColor: st.adminTab === 'solicitacoes' ? '#fff' : theme.text,
-      isSuperAdmin, isAdmin, isAdminNow: isAdmin,
+      isAdminMsgs: adminTab === 'mensagens', isAdminCats: adminTab === 'categorias', isAdminAcessos: adminTab === 'acessos',
+      isAdminAccounts: adminTab === 'contas',
+      isAdminSolicitacoes: adminTab === 'solicitacoes',
+      isAdminArchived: adminTab === 'arquivados',
+      isSuperAdmin, isAdminNow: isSuperAdmin,
       goBiblioteca: () => this.setState({ appView: 'biblioteca', userMenuOpen: false }),
       goVisaoGeral: () => this.setState({ appView: 'visaogeral', userMenuOpen: false }),
-      goAdmin: () => this.setState({ appView: 'admin', userMenuOpen: false, adminTab: 'mensagens' }),
+      goAdmin: () => { this.setState({ appView: 'admin', userMenuOpen: false, adminTab: 'mensagens' }); void this.loadStructuralAdmin(); },
       setAdminTabMsgs: () => this.setState({ adminTab: 'mensagens' }),
       setAdminTabCats: () => this.setState({ adminTab: 'categorias' }),
-      setAdminTabAcessos: () => this.setState({ adminTab: 'acessos' }),
+      setAdminTabAcessos: () => { this.setState({ adminTab: 'acessos' }); void this.loadStructuralAdmin(); },
+      setAdminTabAccounts: () => { this.setState({ adminTab: 'contas' }); void this.loadStructuralAdmin(); },
       setAdminTabSolicitacoes: () => this.setState({ adminTab: 'solicitacoes' }),
+      setAdminTabArchived: () => this.openArchivedAdmin(),
 
       solicitacoesCount: st.solicitacoesPendentes.length,
-      solicitacoesTabLabel: st.solicitacoesPendentes.length > 0 ? `Solicitações (${st.solicitacoesPendentes.length})` : 'Solicitações',
       goApprovals: () => this.setState({ appView: 'admin', adminTab: 'solicitacoes', showApprovalPopup: false, userMenuOpen: false }),
 
-      currentUser: { nome: profile.nome, iniciais: profile.nome.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(), perfilLabel: isSuperAdmin ? 'Administrador' : (isAdmin ? 'Admin local' : 'Usuário') },
-      userMenuOpen: !!st.userMenuOpen, toggleUserMenu: () => this.setState({ userMenuOpen: !st.userMenuOpen }),
+      currentUser: { nome: profile.nome, iniciais: profile.nome.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase(), perfilLabel: this.roleLabel(profile.role) },
       logout: () => this.logout(),
 
       activeAcesso, activeAcessoId: activeAcesso.id,
-      showAcessoSelector: userAcessoLinks.length > 1,
-      userAcessosOptions: userAcessoLinks.map(l => st.acessos.find(a => a.id === l.acesso_id)).filter(Boolean),
-      onChangeActiveAcesso: (e) => this.setState({ activeAcessoId: e.target.value, categoryFilter: null }),
+      userAcessosOptions: accessOptions,
+      onChangeActiveAcesso: (e) => this.changeActiveAccess(e.target.value),
 
-      searchQuery: st.searchQuery, searchQueryDraft: st.searchQueryDraft, searchInputRef: (el) => { this.searchEl = el; },
+      searchQueryDraft: st.searchQueryDraft, searchInputRef: (el) => { this.searchEl = el; },
       onSearchChange: (e) => {
         const val = e.target.value;
-        this.setState({ searchQueryDraft: val });
+        this.setState({ searchQueryDraft: val, libraryVisibleLimit: 30 });
         clearTimeout(this._searchDebounce);
-        this._searchDebounce = setTimeout(() => this.setState({ searchQuery: val }), 150);
+        this._searchDebounce = setTimeout(() => this.setState({ searchQuery: val }), 100);
       },
       onSearchFocus: () => this.setState({ searchFocused: true }),
       onSearchBlur: () => this.setState({ searchFocused: false }),
       shortcutLabel: /Mac|iPhone|iPod|iPad/i.test(navigator.platform || '') ? '⌘K' : 'Ctrl K',
 
       searchDropdownResults: (() => {
-        const q = st.searchQuery.trim();
-        if (!q) return [];
-        return acessoMsgs.filter(m => this.matchesSearch(m, q))
+        const query = st.searchQuery.trim();
+        if (!query) return [];
+        return acessoMsgs.filter(m => this.matchesSearch(m, query))
           .sort((a, b) => b.frequencia - a.frequencia)
           .slice(0, 6)
           .map(m => ({
-            id: m.id, titulo: m.titulo, categoria: m.categoria,
+            id: m.id, titulo: m.titulo, categoria: categoryName(m),
             snippet: m.conteudo.length > 70 ? m.conteudo.slice(0, 70) + '…' : m.conteudo,
             onPick: (e) => { e.preventDefault(); this.copyMessage(m); this.setState({ searchFocused: false }); if (this.searchEl) this.searchEl.blur(); }
           }));
@@ -720,119 +926,169 @@ class App {
       toggleSidebarCollapsed: () => { const val = !st.sidebarCollapsed; this.setState({ sidebarCollapsed: val }); try { localStorage.setItem('dp_sidebar_collapsed', val ? '1' : '0'); } catch (e) {} },
 
       chipAllActive: !st.categoryFilter, chipAllCount: acessoMsgs.length,
-      setCategoryAll: () => this.setState({ categoryFilter: null }),
+      setCategoryAll: () => this.setState({ categoryFilter: null, libraryVisibleLimit: 30 }),
       categoriaChips,
+      categoryFilter: st.categoryFilter || '',
+      categoryOptions: acessoCats,
+      onCategoryFilterChange: (e) => this.setState({ categoryFilter: e.target.value || null, libraryVisibleLimit: 30 }),
 
-      heroGreeting, heroStats,
-      mostUsedList: mostUsed, recentList, hasRecent: recentList.length > 0,
+      heroGreeting,
+      recentList, hasRecent: recentList.length > 0,
       favList, hasFav: favList.length > 0,
 
       resultsCountLabel: filtered.length === 1 ? '1 mensagem encontrada' : `${filtered.length} mensagens encontradas`,
       hasResults: filtered.length > 0,
       libraryIsTrulyEmpty: acessoMsgs.length === 0 && !st.searchQuery.trim() && !st.categoryFilter,
       gridStyle, cardPadding, cardGap,
-      cardList: filtered.map(buildCard),
+      cardList: libraryPage.items.map(buildCard),
+      hasMoreMessages: libraryPage.hasMore,
+      loadMoreLabel: `Carregar mais (${libraryPage.total - libraryPage.items.length} restantes)`,
+      onLoadMore: () => this.setState({ libraryVisibleLimit: libraryPage.nextLimit }),
 
       librarySort: st.librarySort,
-      onLibrarySortChange: (e) => this.setState({ librarySort: e.target.value }),
-      libraryViewMode: st.libraryViewMode,
-      isGridView: st.libraryViewMode !== 'list', isListView: st.libraryViewMode === 'list',
-      setGridView: () => this.setState({ libraryViewMode: 'grid' }),
-      setListView: () => this.setState({ libraryViewMode: 'list' }),
+      onLibrarySortChange: (e) => this.setState({ librarySort: e.target.value, libraryVisibleLimit: 30 }),
 
       showPreviewModal: st.showPreviewModal,
       closePreview: () => this.setState({ showPreviewModal: false }),
-      previewingMsg: (() => {
-        const m = acessoMsgs.find(x => x.id === st.previewingMsgId);
-        if (!m) return null;
-        return {
-          titulo: m.titulo, categoria: m.categoria, catColor: this.categoryColor(m.categoria), catIcon: this.categoryIcon(m.categoria),
-          conteudo: m.conteudo, onCopy: () => copyMessage(m)
-        };
-      })(),
+      previewingMsg: previewing ? {
+        titulo: previewing.titulo, categoria: categoryName(previewing),
+        catColor: this.categoryColor(categoryName(previewing)), catIcon: this.categoryIcon(categoryName(previewing)),
+        conteudo: previewing.conteudo, onCopy: () => copyMessage(previewing)
+      } : null,
 
       paletteOpen: st.paletteOpen, paletteQuery: st.paletteQuery, paletteInputRef: (el) => { this.paletteEl = el; if (el && document.activeElement !== el) el.focus(); },
       onPaletteQueryChange: (e) => this.setState({ paletteQuery: e.target.value, paletteIndex: 0 }),
       openPalette: () => this.setState({ paletteOpen: true, paletteQuery: '', paletteIndex: 0 }),
       closePalette: () => this.setState({ paletteOpen: false }),
       paletteRows: st.paletteOpen ? this.paletteList().map((m, i) => ({
-        titulo: m.titulo, categoria: m.categoria, catColor: this.categoryColor(m.categoria),
+        titulo: m.titulo, categoria: categoryName(m), catColor: this.categoryColor(categoryName(m)),
         active: i === st.paletteIndex,
         onPick: () => this.copyFromPalette(m),
-        onHover: () => this.setState({ paletteIndex: i })
       })) : [],
       paletteEmpty: st.paletteOpen && this.paletteList().length === 0,
 
-      categorias: acessoCats,
-      adminSearchQuery: st.adminSearchQuery, adminSearchQueryDraft: st.adminSearchQueryDraft,
+      adminSearchQueryDraft: st.adminSearchQueryDraft,
       onAdminSearchChange: (e) => {
         const val = e.target.value;
         this.setState({ adminSearchQueryDraft: val });
         clearTimeout(this._adminSearchDebounce);
         this._adminSearchDebounce = setTimeout(() => this.setState({ adminSearchQuery: val }), 150);
       },
-      adminMsgRows, catRows, acessoRows,
+      adminMsgRows, catRows, acessoRows, accountRows, accountsLoading: st.structuralLoading,
       openCreateMsg: () => this.openCreateMsg(),
-      showUsersModal: st.showUsersModal,
-      usersModalAcessoNome: (st.acessos.find(a => a.id === st.usersModalAcessoId) || {}).nome || '',
-      acessoUsersLoading: st.acessoUsersLoading,
-      usersModalRows: st.acessoUsers.map(u => ({
-        userId: u.userId, nome: u.nome, email: u.email,
-        isAdminLocal: u.isAdminLocal,
-        roleLabel: u.isAdminLocal ? 'Admin local' : 'Usuário',
-        onResetPassword: () => this.requestResetPassword(u),
-        onToggleAdmin: () => this.toggleMemberAdminLocal(u.userId, !u.isAdminLocal),
-        onUnlink: () => this.requestUnlinkUser(u),
-        justReset: st.resetPasswordResult && st.resetPasswordResult.userId === u.userId ? st.resetPasswordResult.tempPassword : null,
-        tempPasswordCopied: st.tempPasswordCopiedFor === u.userId,
-        onCopyTempPassword: () => {
-          const pwd = st.resetPasswordResult && st.resetPasswordResult.tempPassword;
-          if (!pwd) return;
-          navigator.clipboard && navigator.clipboard.writeText(pwd).catch(() => {});
-          this.setState({ tempPasswordCopiedFor: u.userId });
-          setTimeout(() => this.setState({ tempPasswordCopiedFor: null }), 1400);
-        }
-      })),
-      addUserOptions: st.allProfiles.filter(p => !st.acessoUsers.some(u => u.userId === p.id)),
-      addUserSelectedId: st.addUserSelectedId,
-      onAddUserSelectChange: (e) => this.setState({ addUserSelectedId: e.target.value }),
-      addUserToAcesso: () => this.addUserToAcesso(),
-      closeUsersModal: () => this.setState({ showUsersModal: false, resetPasswordResult: null }),
+      openCreateCat: () => this.openCreateCat(),
+      openCreateAcesso: () => this.openCreateAccess(),
+      openCreateAccount: () => this.openCreateAccount(),
+      createMessageLabel: canPublish ? 'Nova mensagem' : 'Sugerir mensagem',
 
-      saving: st.saving,
-      showMsgModal: st.showMsgModal, msgModalTitle: st.editingMsgId ? 'Editar mensagem' : 'Nova mensagem',
-      msgTituloRef: (el) => { if (el && !this._msgTituloFocused) { this._msgTituloFocused = true; el.focus(); } },
-      msgForm: st.msgForm, msgFormTagChips, msgContentCount: st.msgForm.conteudo.length,
-      onMsgCategoriaChange: (e) => this.setState(s => ({ msgForm: { ...s.msgForm, categoria: e.target.value } })),
-      onMsgTituloChange: (e) => this.setState(s => ({ msgForm: { ...s.msgForm, titulo: e.target.value.slice(0, 100) } })),
-      onMsgTagInputChange: (e) => this.setState(s => ({ msgForm: { ...s.msgForm, tagInput: e.target.value } })),
-      onMsgTagKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); this.addMsgTag(); } },
-      addMsgTag: () => this.addMsgTag(),
-      onMsgConteudoChange: (e) => this.setState(s => ({ msgForm: { ...s.msgForm, conteudo: e.target.value.slice(0, 2000) } })),
-      closeMsgModal: () => this.setState({ showMsgModal: false }),
-      saveMsg: () => this.saveMsg(),
+      messageEditor: {
+        open: st.showMsgModal,
+        title: st.editingMsgId ? 'Editar mensagem' : 'Nova mensagem',
+        categories: acessoCats, form: st.msgForm,
+        saving: st.saving, error: st.msgError, invalid: st.msgInvalid,
+        tagChips: st.msgForm.tags.map((label, index) => ({
+          label, onRemove: () => this.updateMsgForm({ tags: this.state.msgForm.tags.filter((_, i) => i !== index) }),
+        })),
+        onCategoryChange: (e) => this.updateMsgForm({ categoryId: e.target.value }),
+        onTitleChange: (e) => this.updateMsgForm({ title: e.target.value.slice(0, 100) }),
+        onTagInputChange: (e) => this.updateMsgForm({ tagInput: e.target.value }),
+        onTagKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); this.addMsgTag(); } },
+        onAddTag: () => this.addMsgTag(),
+        onContentChange: (e) => this.updateMsgForm({ content: e.target.value.slice(0, 2000) }),
+        onClose: () => this.closeMsgModal(),
+        onSubmit: () => this.saveMsg(),
+      },
 
-      showCatModal: st.showCatModal, catModalTitle: st.editingCatId ? 'Editar categoria' : 'Nova categoria', catForm: st.catForm,
-      catNomeRef: (el) => { if (el && !this._catNomeFocused) { this._catNomeFocused = true; el.focus(); } },
-      openCreateCat: () => { this._catNomeFocused = false; this.setState({ showCatModal: true, editingCatId: null, catForm: { nome: '' } }); },
-      onCatNomeChange: (e) => this.setState({ catForm: { nome: e.target.value } }),
-      closeCatModal: () => this.setState({ showCatModal: false }),
-      saveCat: () => this.saveCat(),
+      messageRequestModal: {
+        ...st.messageRequestModal,
+        categories: acessoCats,
+        saving: st.requestSaving,
+        accessibleName: st.messageRequestModal.type === 'criacao'
+          ? 'Solicitar nova mensagem'
+          : st.messageRequestModal.type === 'edicao'
+            ? `Sugerir edição de ${st.messageRequestModal.previous?.titulo || ''}`
+            : `Solicitar arquivamento de ${st.messageRequestModal.previous?.titulo || ''}`,
+        title: st.messageRequestModal.type === 'criacao' ? 'Solicitar nova mensagem' : 'Sugerir edição',
+        onCategoryChange: (e) => this.updateMessageRequestForm('categoryId', e.target.value),
+        onTitleChange: (e) => this.updateMessageRequestForm('title', e.target.value.slice(0, 100)),
+        onTagsChange: (e) => this.updateMessageRequestForm('tagsText', e.target.value),
+        onContentChange: (e) => this.updateMessageRequestForm('content', e.target.value.slice(0, 2000)),
+        onClose: () => this.closeMessageRequest(),
+        onSubmit: () => this.submitMessageRequest()
+      },
 
-      showAcessoModal: st.showAcessoModal, acessoForm: st.acessoForm,
-      acessoNomeRef: (el) => { if (el && !this._acessoNomeFocused) { this._acessoNomeFocused = true; el.focus(); } },
-      openCreateAcesso: () => { this._acessoNomeFocused = false; this.setState({ showAcessoModal: true, acessoForm: { nome: '', descricao: '', cor: '#1BA7DC' } }); },
-      onAcessoNomeChange: (e) => this.setState(s => ({ acessoForm: { ...s.acessoForm, nome: e.target.value } })),
-      onAcessoDescChange: (e) => this.setState(s => ({ acessoForm: { ...s.acessoForm, descricao: e.target.value } })),
-      acessoColorOptions: ['#1BA7DC', '#0F2C6B', '#4F46E5', '#16A34A', '#D97706'].map(c => ({
-        value: c, border: st.acessoForm.cor === c ? '2px solid #12203F' : '2px solid transparent',
-        onSelect: () => this.setState(s => ({ acessoForm: { ...s.acessoForm, cor: c } }))
-      })),
-      closeAcessoModal: () => this.setState({ showAcessoModal: false }),
-      saveAcesso: () => this.saveAcesso(),
+      structuralModals: {
+        access: {
+          open: st.showAcessoModal,
+          form: { name: st.acessoForm.nome, description: st.acessoForm.descricao, color: st.acessoForm.cor },
+          saving: st.saving, error: st.accessError, invalid: st.accessInvalid,
+          onNameChange: (event) => this.updateAccessForm({ nome: event.target.value }),
+          onDescriptionChange: (event) => this.updateAccessForm({ descricao: event.target.value }),
+          onColorChange: (event) => this.updateAccessForm({ cor: event.target.value }),
+          onClose: () => this.closeAccessModal(),
+          onSubmit: () => this.saveAccess(),
+        },
+        category: {
+          open: st.showCatModal,
+          title: st.editingCatId ? 'Editar categoria' : 'Nova categoria',
+          name: st.catForm.nome, saving: st.saving, error: st.categoryError, invalid: st.categoryInvalid,
+          onNameChange: (event) => this.setState({ catForm: { nome: event.target.value }, categoryError: '', categoryInvalid: [] }),
+          onClose: () => this.closeCatModal(),
+          onSubmit: () => this.saveCat(),
+        },
+        account: {
+          open: st.showAccountModal, form: st.accountForm, saving: st.saving, error: st.accountError, invalid: st.accountInvalid,
+          accesses: st.acessos.map(access => ({
+            name: access.nome,
+            checked: st.accountForm.accessIds.has(access.id),
+            onChange: event => this.setAccountAccess(access.id, event.target.checked),
+          })),
+          onNameChange: event => this.updateAccountForm('name', event.target.value),
+          onEmailChange: event => this.updateAccountForm('email', event.target.value),
+          onPasswordChange: event => this.updateAccountForm('temporaryPassword', event.target.value),
+          onRoleChange: event => this.updateAccountForm('role', event.target.value),
+          onClose: () => this.closeAccountModal(),
+          onSubmit: () => this.createAccount(),
+        },
+        membership: {
+          open: st.showMembershipModal,
+          name: st.adminProfiles.find(account => account.id === st.membershipUserId)?.nome || '',
+          saving: st.saving, error: st.membershipError,
+          accesses: st.acessos.map(access => ({
+            name: access.nome, active: access.ativo,
+            checked: st.membershipDraft.has(access.id),
+            onChange: event => this.setMembershipDraft(access.id, event.target.checked),
+          })),
+          onClose: () => this.closeMembershipModal(),
+          onSubmit: () => this.saveMemberships(),
+        },
+        accessUsers: accessUsers.open ? {
+          open: true,
+          accessName: st.acessos.find(a => a.id === accessUsers.accessId)?.nome ?? '',
+          loading: accessUsers.loading, saving: accessUsers.saving, error: accessUsers.error,
+          rows: accessUsers.users.map(user => ({
+            userId: user.userId, name: user.name, email: user.email, roleLabel: this.roleLabel(user.role),
+            onResetPassword: () => this.requestResetPassword(user),
+            onUnlink: () => this.requestUnlinkUser(user),
+          })),
+          options: accessUsers.profiles.filter(p => !accessUsers.users.some(u => u.userId === p.id)),
+          selectedId: accessUsers.selectedId,
+          onSelect: (e) => this.setState(s => ({ accessUsersModal: { ...s.accessUsersModal, selectedId: e.target.value, error: '' } })),
+          onAdd: () => this.addUserToAccess(),
+          onClose: () => this.closeAccessUsers(),
+        } : { open: false },
+        temporaryPassword: {
+          ...st.temporaryPassword,
+          onCopy: () => this.copyTemporaryPassword(),
+          onClose: () => this.closeTemporaryPassword(),
+        },
+      },
 
-      confirm: st.confirm, closeConfirm: () => this.setState({ confirm: { open: false, title: '', message: '', action: null } }),
-      runConfirm: () => { if (st.confirm.action) st.confirm.action(); this.setState({ confirm: { open: false, title: '', message: '', action: null } }); },
+      confirmModal: st.confirm.open ? {
+        ...st.confirm,
+        onClose: () => this.closeConfirm(),
+        onConfirm: () => this.runConfirm(),
+      } : null,
 
       showApprovalPopup: st.showApprovalPopup,
       approvalPopupCount: st.solicitacoesPendentes.length,
@@ -840,38 +1096,41 @@ class App {
 
       solicitacaoRows: st.solicitacoesPendentes.map(s => ({
         id: s.id,
+        titulo: s.titulo || s.titulo_anterior || 'Mensagem',
         departamento: s.acessos ? s.acessos.nome : '—',
         usuario: s.solicitante ? s.solicitante.nome : '—',
-        tipoLabel: s.tipo === 'criacao' ? 'Criação' : s.tipo === 'edicao' ? 'Edição' : 'Exclusão',
-        dataLabel: new Date(s.criado_em).toLocaleString('pt-BR'),
-        onOpen: () => this.setState({ showSolicitacaoModal: true, viewingSolicitacaoId: s.id, solicitacaoRejectMode: false, rejectMotivo: '' })
+        tipoLabel: requestTypeLabel(s.tipo),
+        onOpen: () => this.openReview(s.id),
       })),
-      hasSolicitacoes: st.solicitacoesPendentes.length > 0,
+      archivedLoading: st.archivedLoading,
+      archivedMessageRows: st.archivedMessages.map(message => ({
+        ...message,
+        onRestore: () => this.restoreArchivedMessage(message)
+      })),
+      archivedCategoryRows: st.archivedCategories.map(category => ({
+        ...category,
+        onRestore: () => this.restoreArchivedCategory(category)
+      })),
 
-      showSolicitacaoModal: st.showSolicitacaoModal,
-      closeSolicitacaoModal: () => this.setState({ showSolicitacaoModal: false, solicitacaoRejectMode: false }),
-      viewingSolicitacao: (() => {
-        const s = st.solicitacoesPendentes.find(x => x.id === st.viewingSolicitacaoId);
-        if (!s) return null;
-        return {
-          id: s.id,
-          departamento: s.acessos ? s.acessos.nome : '—',
-          usuario: s.solicitante ? s.solicitante.nome : '—',
-          tipoLabel: s.tipo === 'criacao' ? 'Criação' : s.tipo === 'edicao' ? 'Edição' : 'Exclusão',
-          dataLabel: new Date(s.criado_em).toLocaleString('pt-BR'),
-          isCriacao: s.tipo === 'criacao',
-          categoriaAnterior: s.categoria_anterior, categoriaNova: s.categoria,
-          tituloAnterior: s.titulo_anterior, tituloNovo: s.titulo,
-          conteudoAnterior: s.conteudo_anterior, conteudoNovo: s.conteudo,
-          isRejectMode: st.solicitacaoRejectMode,
-          rejectMotivo: st.rejectMotivo
-        };
-      })(),
-      aprovarViewing: () => this.aprovarSolicitacaoViewing(),
-      startReject: () => this.setState({ solicitacaoRejectMode: true }),
-      cancelReject: () => this.setState({ solicitacaoRejectMode: false, rejectMotivo: '' }),
-      onRejectMotivoChange: (e) => this.setState({ rejectMotivo: e.target.value }),
-      confirmReject: () => this.rejeitarSolicitacaoViewing(),
+      reviewModal: pendingRequest ? {
+        open: st.showSolicitacaoModal,
+        request: {
+          typeLabel: requestTypeLabel(pendingRequest.tipo),
+          isCreation: pendingRequest.tipo === 'criacao', isArchive: isArchiveRequest(pendingRequest.tipo),
+          department: pendingRequest.acessos?.nome || '—', user: pendingRequest.solicitante?.nome || '—',
+          previousCategory: pendingRequest.categoria_anterior, category: pendingRequest.categoria,
+          previousTitle: pendingRequest.titulo_anterior, title: pendingRequest.titulo,
+          previousContent: pendingRequest.conteudo_anterior, content: pendingRequest.conteudo
+        },
+        rejectMode: st.solicitacaoRejectMode, reason: st.rejectMotivo,
+        saving: st.reviewSaving, error: st.reviewError, invalid: st.reviewInvalid,
+        onClose: () => this.closeReview(),
+        onStartReject: () => this.setState({ solicitacaoRejectMode: true, reviewError: '', reviewInvalid: [] }),
+        onCancelReject: () => { if (!this.state.reviewSaving) this.setState({ solicitacaoRejectMode: false, rejectMotivo: '', reviewError: '', reviewInvalid: [] }); },
+        onReasonChange: (e) => this.setState({ rejectMotivo: e.target.value, reviewError: '', reviewInvalid: [] }),
+        onApprove: () => this.approveReviewedRequest(),
+        onReject: () => this.rejectReviewedRequest()
+      } : { open: false },
 
       toasts: st.toasts
     };
@@ -887,7 +1146,7 @@ class App {
       // Leave loggingIn true — the auth listener now loads the app data, and
       // the login screen (and its button) unmounts as soon as that finishes.
     } catch (e) {
-      this.setState({ loginError: e.message, loggingIn: false });
+      this.setState({ loginError: resolveErrorPolicy(e).message, loggingIn: false });
     }
   }
 
@@ -896,233 +1155,596 @@ class App {
     try {
       await api.signOut();
     } catch (e) {
-      this.showToast('Não foi possível sair: ' + e.message, 'error');
+      this.showToast(`Não foi possível sair. ${resolveErrorPolicy(e).message}`, 'error');
     }
   }
 
+  /* messages: superadministrators publish directly, collaborators send requests */
+
   openCreateMsg() {
-    const cats = this.state.categorias.filter(c => c.acesso_id === this.state.activeAcessoId);
-    this._msgTituloFocused = false;
-    this.setState({ showMsgModal: true, editingMsgId: null, msgForm: { categoria: cats[0] ? cats[0].nome : '', titulo: '', tagInput: '', tags: [], conteudo: '' } });
+    if (!canPublishContent(this.role())) {
+      this.openMessageRequest('criacao');
+      return;
+    }
+    const categories = this.state.categorias.filter(c => c.acesso_id === this.state.activeAcessoId);
+    this.setState({
+      showMsgModal: true, editingMsgId: null, msgError: '', msgInvalid: [],
+      msgForm: { ...EMPTY_MSG_FORM, tags: [], categoryId: categories[0]?.id ?? '' },
+    });
   }
   openEditMsg(msg) {
-    this._msgTituloFocused = false;
-    this.setState({ showMsgModal: true, editingMsgId: msg.id, msgForm: { categoria: msg.categoria, titulo: msg.titulo, tagInput: '', tags: [...msg.tags], conteudo: msg.conteudo } });
+    if (!canPublishContent(this.role())) {
+      this.openMessageRequest('edicao', msg);
+      return;
+    }
+    this.setState({
+      showMsgModal: true, editingMsgId: msg.id, msgError: '', msgInvalid: [],
+      msgForm: { categoryId: msg.categoria_id, title: msg.titulo, tagInput: '', tags: [...msg.tags], content: msg.conteudo },
+    });
   }
-
-  isAdminNow(acessoId) {
-    const st = this.state;
-    if (!st.currentUser) return false;
-    if (st.currentUser.profile.role === 'superadmin') return true;
-    const entry = st.acessoMembros.find(m => m.acesso_id === acessoId);
-    return !!(entry && entry.is_admin_local);
+  updateMsgForm(patch) {
+    this.setState(s => ({ msgForm: { ...s.msgForm, ...patch }, msgError: '', msgInvalid: [] }));
   }
   addMsgTag() {
-    const val = this.state.msgForm.tagInput.trim();
-    if (!val) return;
-    const isDupe = this.state.msgForm.tags.some(t => t.toLowerCase() === val.toLowerCase());
-    if (isDupe) { this.setState(s => ({ msgForm: { ...s.msgForm, tagInput: '' } })); return; }
-    this.setState(s => ({ msgForm: { ...s.msgForm, tags: [...s.msgForm.tags, val], tagInput: '' } }));
+    const { tagInput, tags } = this.state.msgForm;
+    this.updateMsgForm({ tags: normalizeTags([...tags, tagInput]), tagInput: '' });
+  }
+  closeMsgModal() {
+    if (this.state.saving) return;
+    this.setState({ showMsgModal: false, msgError: '', msgInvalid: [] });
   }
   async saveMsg() {
-    if (this.state.saving) return;
+    if (this.state.saving || !canPublishContent(this.role())) return;
     const f = this.state.msgForm;
-    if (!f.categoria) { this.showToast('Este Acesso ainda não tem categorias. Crie uma categoria antes de adicionar mensagens.', 'error'); return; }
-    if (!f.titulo.trim() || !f.conteudo.trim()) { this.showToast('Preencha título e conteúdo.', 'error'); return; }
-    const wasCreate = !this.state.editingMsgId;
-    const acessoId = this.state.activeAcessoId;
-    const userId = this.state.currentUser.profile.id;
-    this.setState({ saving: true });
+    const invalid = [!f.categoryId && 'categoryId', !f.title.trim() && 'title', !f.content.trim() && 'content'].filter(Boolean);
+    if (invalid.length) {
+      this.setState({
+        msgInvalid: invalid,
+        msgError: f.categoryId ? 'Preencha título e conteúdo.' : 'Este acesso ainda não tem categorias. Crie uma categoria antes de adicionar mensagens.',
+      });
+      this.focusFirstInvalid();
+      return;
+    }
+    const editingId = this.state.editingMsgId;
+    const accessId = this.state.activeAcessoId;
+    this.setState({ saving: true, msgError: '', msgInvalid: [] });
+    try {
+      const saved = await api.saveMessage({
+        id: editingId, accessId, categoryId: f.categoryId, title: f.title, tags: normalizeTags(f.tags), content: f.content,
+      });
+      this.setState({ saving: false, showMsgModal: false });
+      await this.reloadLibrary(accessId);
+      if (editingId) {
+        this.showToast('Mensagem salva com sucesso!', 'success');
+        return;
+      }
+      const copied = await Promise.resolve(navigator.clipboard?.writeText(saved.conteudo)).then(() => !!navigator.clipboard, () => false);
+      if (copied) {
+        this.setState({ copiedId: saved.id });
+        setTimeout(() => this.setState({ copiedId: null }), 1400);
+      }
+      this.showToast(copied ? 'Mensagem criada e copiada!' : 'Mensagem criada.', 'success');
+    } catch (error) {
+      this.setState({ saving: false });
+      await this.handleError(error, {
+        setFormError: message => this.setState({ msgError: message }),
+        closeDetail: editingId ? () => this.setState({ showMsgModal: false }) : null,
+        retry: () => this.saveMsg(),
+      });
+    }
+  }
 
-    if (!this.isAdminNow(acessoId)) {
-      try {
-        if (wasCreate) {
-          await api.solicitarCriacaoMensagem({ acessoId, categoria: f.categoria, titulo: f.titulo, tags: f.tags, conteudo: f.conteudo, userId });
-        } else {
-          const anterior = this.state.mensagens.find(m => m.id === this.state.editingMsgId);
-          await api.solicitarEdicaoMensagem({ acessoId, mensagemId: this.state.editingMsgId, categoria: f.categoria, titulo: f.titulo, tags: f.tags, conteudo: f.conteudo, anterior, userId });
-        }
-        this.setState({ showMsgModal: false });
-        await this.refreshAppData(this.state.currentUser);
-        this.showToast('Enviado para aprovação. Um administrador irá revisar.', 'success');
-      } catch (e) { this.showToast(e.message, 'error'); } finally { this.setState({ saving: false }); }
+  openMessageRequest(type, message = null) {
+    const categories = this.state.categorias.filter(category =>
+      category.acesso_id === this.state.activeAcessoId && !category.arquivado_em
+    );
+    if (type !== 'arquivamento' && categories.length === 0) {
+      this.showToast('Este Acesso ainda não tem categorias disponíveis.', 'error');
       return;
     }
 
+    this.setState({
+      requestSaving: false,
+      messageRequestModal: {
+        open: true,
+        type,
+        messageId: message?.id ?? null,
+        idempotencyKey: getOrCreateIdempotencyKey(),
+        form: {
+          categoryId: message?.categoria_id ?? categories[0]?.id ?? '',
+          title: message?.titulo ?? '',
+          tagsText: Array.isArray(message?.tags) ? message.tags.join(', ') : '',
+          content: message?.conteudo ?? ''
+        },
+        previous: message ? {
+          categoria_id: message.categoria_id,
+          categoria: message.categoria,
+          titulo: message.titulo,
+          conteudo: message.conteudo,
+          tags: [...message.tags]
+        } : null,
+        error: '',
+        invalid: [],
+      }
+    });
+  }
+  updateMessageRequestForm(field, value) {
+    this.setState(state => ({
+      messageRequestModal: {
+        ...state.messageRequestModal,
+        error: '',
+        invalid: [],
+        form: { ...state.messageRequestModal.form, [field]: value }
+      }
+    }));
+  }
+  closeMessageRequest() {
+    if (this.state.requestSaving) return;
+    this.setState({ messageRequestModal: CLOSED_REQUEST_MODAL });
+  }
+  async submitMessageRequest() {
+    if (this.state.requestSaving) return;
+    const request = this.state.messageRequestModal;
+    const form = request.form;
+    const invalid = request.type === 'arquivamento'
+      ? []
+      : [!form.categoryId && 'categoryId', !form.title.trim() && 'title', !form.content.trim() && 'content'].filter(Boolean);
+    if (invalid.length) {
+      this.setState(state => ({
+        messageRequestModal: { ...state.messageRequestModal, error: 'Preencha categoria, título e conteúdo.', invalid }
+      }));
+      this.focusFirstInvalid();
+      return;
+    }
+
+    this.setState({ requestSaving: true });
     try {
-      const saved = await api.saveMensagem({ id: this.state.editingMsgId, acessoId, categoria: f.categoria, titulo: f.titulo, tags: f.tags, conteudo: f.conteudo });
-      this.setState({ showMsgModal: false });
-      await this.refreshAppData(this.state.currentUser);
-      if (wasCreate && saved) {
-        navigator.clipboard && navigator.clipboard.writeText(saved.conteudo).catch(() => {});
-        this.setState({ appView: 'biblioteca', copiedId: saved.id });
-        setTimeout(() => this.setState({ copiedId: null }), 1400);
-        this.showToast('Mensagem criada e copiada!', 'success');
-      } else {
-        this.showToast('Mensagem salva com sucesso!', 'success');
-      }
-    } catch (e) { this.showToast(e.message, 'error'); } finally { this.setState({ saving: false }); }
-  }
-  /* Exclusão direta de admin não chama a API na hora — dá baixa visual
-   * imediata (via pendingDeleteIds) e só efetiva depois de 6s, dando tempo
-   * pro "Desfazer" do toast cancelar antes de qualquer chamada de rede. */
-  scheduleDelete(id, apiCall, successMsg) {
-    this.setState(s => ({ pendingDeleteIds: new Set(s.pendingDeleteIds).add(id) }));
-    const clear = () => this.setState(s => {
-      const next = new Set(s.pendingDeleteIds); next.delete(id); return { pendingDeleteIds: next };
-    });
-    const timer = setTimeout(async () => {
-      this._pendingDeleteTimers.delete(id);
-      try {
-        await apiCall();
-        await this.refreshAppData(this.state.currentUser);
-      } catch (e) {
-        clear();
-        this.showToast(e.message, 'error');
-        return;
-      }
-      clear();
-    }, 6000);
-    this._pendingDeleteTimers.set(id, timer);
-    this.showToast(successMsg, 'success', '', { label: 'Desfazer', onClick: () => this.undoDelete(id) });
-  }
-  undoDelete(id) {
-    const timer = this._pendingDeleteTimers.get(id);
-    if (timer) { clearTimeout(timer); this._pendingDeleteTimers.delete(id); }
-    this.setState(s => {
-      const next = new Set(s.pendingDeleteIds); next.delete(id); return { pendingDeleteIds: next };
-    });
-  }
-  deleteMsg(id) {
-    this.scheduleDelete(id, () => api.deleteMensagem(id), 'Mensagem excluída.');
-  }
-  requestDeleteMsg(msg) {
-    if (this.isAdminNow(msg.acesso_id)) {
-      this.requestDelete('Excluir mensagem', `Tem certeza que deseja excluir "${msg.titulo}"? Esta ação não pode ser desfeita.`, () => this.deleteMsg(msg.id));
-    } else {
-      this.requestDelete('Solicitar exclusão', `Deseja solicitar a exclusão de "${msg.titulo}"? Um administrador precisará aprovar antes que a mensagem seja removida.`, () => this.solicitarExclusaoMsg(msg));
+      await api.submitMessageRequest({
+        idempotencyKey: request.idempotencyKey,
+        accessId: this.state.activeAcessoId,
+        type: request.type,
+        messageId: request.messageId,
+        categoryId: form.categoryId || null,
+        title: form.title.trim() || null,
+        tags: normalizeTags(form.tagsText),
+        content: form.content.trim() || null,
+        previous: request.previous
+      });
+      this.setState({ requestSaving: false });
+      this.closeMessageRequest();
+      this.showToast('Proposta enviada para revisão', 'success');
+    } catch (error) {
+      this.setState({ requestSaving: false });
+      await this.handleError(error, {
+        setFormError: message => this.setState(state => ({
+          messageRequestModal: { ...state.messageRequestModal, error: message }
+        })),
+        // A proposal about a message that no longer exists is moot; a new proposal keeps its text.
+        closeDetail: request.type === 'criacao' ? null : () => this.closeMessageRequest(),
+        refresh: () => this.reloadLibrary(),
+        // The request may have been stored; retrying reuses the same idempotency key.
+        messages: { NETWORK: 'Não foi possível confirmar o envio. Tente novamente.' },
+      });
     }
   }
-  async solicitarExclusaoMsg(msg) {
+
+  /* archive and restore: the only removal path (FR-020) */
+
+  requestArchiveMessage(msg) {
+    if (!canPublishContent(this.role())) {
+      this.openMessageRequest('arquivamento', msg);
+      return;
+    }
+    this.requestConfirmation(
+      'Arquivar mensagem',
+      `Arquivar "${msg.titulo}"? Ela sai da biblioteca e pode ser restaurada depois em Administração › Arquivados, com favoritos e recentes preservados.`,
+      () => this.performArchiveMessage(msg)
+    );
+  }
+  async performArchiveMessage(msg) {
     try {
-      await api.solicitarExclusaoMensagem({ acessoId: msg.acesso_id, mensagemId: msg.id, anterior: msg, userId: this.state.currentUser.profile.id });
-      await this.refreshAppData(this.state.currentUser);
-      this.showToast('Solicitação de exclusão enviada para aprovação.', 'success');
-    } catch (e) { this.showToast(e.message, 'error'); }
+      await api.archiveMessage(msg.id);
+      await this.reloadLibrary(msg.acesso_id);
+      if (this.state.adminTab === 'arquivados') await this.loadArchivedContent();
+      this.showToast('Mensagem arquivada.', 'success');
+    } catch (error) {
+      await this.handleError(error, { retry: () => this.performArchiveMessage(msg) });
+    }
+  }
+  requestArchiveCategory(category) {
+    this.requestConfirmation(
+      `Arquivar categoria ${category.nome}`,
+      `Arquivar a categoria "${category.nome}"? Ela pode ser restaurada depois em Administração › Arquivados.`,
+      () => this.performArchiveCategory(category)
+    );
+  }
+  async performArchiveCategory(category) {
+    try {
+      await api.archiveCategory(category.id);
+      await this.reloadLibrary(category.acesso_id);
+      if (this.state.adminTab === 'arquivados') await this.loadArchivedContent();
+      this.showToast('Categoria arquivada.', 'success');
+    } catch (error) {
+      await this.handleError(error, { retry: () => this.performArchiveCategory(category) });
+    }
+  }
+  async loadArchivedContent(accessId = this.state.activeAcessoId) {
+    if (!accessId) return;
+    this.setState({ archivedLoading: true });
+    try {
+      const archived = await api.listArchivedContent(accessId);
+      if (accessId !== this.state.activeAcessoId) return;
+      this.setState({
+        archivedMessages: archived.messages,
+        archivedCategories: archived.categories,
+        archivedLoading: false
+      });
+    } catch (error) {
+      this.setState({ archivedLoading: false });
+      await this.handleError(error, { refresh: false });
+    }
+  }
+  openArchivedAdmin() {
+    this.setState({ adminTab: 'arquivados' });
+    this.loadArchivedContent();
+  }
+  async restoreArchivedMessage(message) {
+    try {
+      await api.restoreMessage(message.id);
+      await Promise.all([this.reloadLibrary(message.acesso_id), this.loadArchivedContent()]);
+      this.showToast('Mensagem restaurada.', 'success');
+    } catch (error) {
+      await this.handleError(error, { retry: () => this.restoreArchivedMessage(message) });
+    }
+  }
+  async restoreArchivedCategory(category) {
+    try {
+      await api.restoreCategory(category.id);
+      await Promise.all([this.reloadLibrary(category.acesso_id), this.loadArchivedContent()]);
+      this.showToast('Categoria restaurada.', 'success');
+    } catch (error) {
+      await this.handleError(error, { retry: () => this.restoreArchivedCategory(category) });
+    }
   }
 
-  async aprovarSolicitacaoViewing() {
-    const id = this.state.viewingSolicitacaoId;
+  /* request review */
+
+  openReview(requestId) {
+    this.setState({
+      showSolicitacaoModal: true, viewingSolicitacaoId: requestId,
+      solicitacaoRejectMode: false, rejectMotivo: '', reviewError: '', reviewInvalid: [],
+    });
+  }
+  closeReview() {
+    if (this.state.reviewSaving) return;
+    this.setState({ showSolicitacaoModal: false, solicitacaoRejectMode: false, reviewError: '', reviewInvalid: [] });
+  }
+  async handleReviewError(error, request) {
+    const policy = await this.handleError(error, {
+      setFormError: message => this.setState({ reviewError: message }),
+      closeDetail: () => this.setState({ showSolicitacaoModal: false, solicitacaoRejectMode: false }),
+      refresh: () => Promise.all([this.reloadPendingRequests(), this.reloadLibrary(request.acesso_id)]),
+      messages: { CONFLICT: 'A mensagem mudou desde a proposta. Recarregamos o estado atual; revise antes de decidir.' },
+    });
+    // CONFLICT on a request that left the pending list means someone else already decided it.
+    if (policy.code === 'CONFLICT' && !this.state.solicitacoesPendentes.some(item => item.id === request.id)) {
+      this.setState({ showSolicitacaoModal: false, solicitacaoRejectMode: false, reviewError: '' });
+      this.showToast('Esta solicitação já foi revisada. Recarregamos o estado atual.', 'error');
+    }
+  }
+  async approveReviewedRequest() {
+    if (this.state.reviewSaving) return;
+    const request = this.state.solicitacoesPendentes.find(item => item.id === this.state.viewingSolicitacaoId);
+    if (!request) return;
+    this.setState({ reviewSaving: true, reviewError: '' });
     try {
-      await api.aprovarSolicitacao(id);
-      this.setState({ showSolicitacaoModal: false });
-      await this.refreshAppData(this.state.currentUser);
+      await api.approveMessageRequest(request.id);
+      this.setState({ reviewSaving: false, showSolicitacaoModal: false });
+      await Promise.all([this.reloadLibrary(request.acesso_id), this.reloadPendingRequests()]);
       this.showToast('Solicitação aprovada.', 'success');
-    } catch (e) { this.showToast(e.message, 'error'); }
+    } catch (error) {
+      this.setState({ reviewSaving: false });
+      await this.handleReviewError(error, request);
+    }
+  }
+  async rejectReviewedRequest() {
+    if (this.state.reviewSaving) return;
+    const request = this.state.solicitacoesPendentes.find(item => item.id === this.state.viewingSolicitacaoId);
+    if (!request) return;
+    const reason = this.state.rejectMotivo.trim();
+    if (!reason || reason.length > 500) {
+      this.setState({ reviewError: 'Informe um motivo de 1 a 500 caracteres.', reviewInvalid: ['reason'] });
+      this.focusFirstInvalid();
+      return;
+    }
+    this.setState({ reviewSaving: true, reviewError: '' });
+    try {
+      await api.rejectMessageRequest(request.id, reason);
+      this.setState({ reviewSaving: false, showSolicitacaoModal: false, solicitacaoRejectMode: false, rejectMotivo: '' });
+      await this.reloadPendingRequests();
+      this.showToast('Solicitação rejeitada.', 'success');
+    } catch (error) {
+      this.setState({ reviewSaving: false });
+      await this.handleReviewError(error, request);
+    }
   }
 
-  async rejeitarSolicitacaoViewing() {
-    const id = this.state.viewingSolicitacaoId;
-    const motivo = this.state.rejectMotivo.trim();
-    if (!motivo) { this.showToast('Informe o motivo da rejeição.', 'error'); return; }
-    try {
-      await api.rejeitarSolicitacao(id, motivo);
-      this.setState({ showSolicitacaoModal: false, solicitacaoRejectMode: false, rejectMotivo: '' });
-      await this.refreshAppData(this.state.currentUser);
-      this.showToast('Solicitação rejeitada.', 'success');
-    } catch (e) { this.showToast(e.message, 'error'); }
+  /* categories */
+
+  openCreateCat() {
+    this.setState({ showCatModal: true, editingCatId: null, catForm: { nome: '' }, categoryError: '', categoryInvalid: [] });
   }
-  openEditCat(cat) { this._catNomeFocused = false; this.setState({ showCatModal: true, editingCatId: cat.id, catForm: { nome: cat.nome } }); }
+  openEditCat(cat) {
+    this.setState({ showCatModal: true, editingCatId: cat.id, catForm: { nome: cat.nome }, categoryError: '', categoryInvalid: [] });
+  }
+  closeCatModal() {
+    if (this.state.saving) return;
+    this.setState({ showCatModal: false, categoryError: '', categoryInvalid: [] });
+  }
   async saveCat() {
     if (this.state.saving) return;
     const nome = this.state.catForm.nome.trim();
-    if (!nome) { this.showToast('Informe o nome da categoria.', 'error'); return; }
+    if (!nome) {
+      this.setState({ categoryError: 'Informe o nome da categoria.', categoryInvalid: ['name'] });
+      this.focusFirstInvalid();
+      return;
+    }
+    const editingId = this.state.editingCatId;
+    const accessId = this.state.activeAcessoId;
     this.setState({ saving: true });
     try {
-      await api.saveCategoria({ id: this.state.editingCatId, acessoId: this.state.activeAcessoId, nome });
-      this.setState({ showCatModal: false });
-      await this.refreshAppData(this.state.currentUser);
+      await api.saveCategory({ id: editingId, accessId, name: nome });
+      this.setState({ saving: false, showCatModal: false, categoryError: '' });
+      await this.reloadLibrary(accessId);
       this.showToast('Categoria salva.', 'success');
-    } catch (e) { this.showToast(e.message, 'error'); } finally { this.setState({ saving: false }); }
-  }
-  deleteCat(id) {
-    this.scheduleDelete(id, () => api.deleteCategoria(id), 'Categoria excluída.');
-  }
-  async saveAcesso() {
-    if (this.state.saving) return;
-    const f = this.state.acessoForm;
-    if (!f.nome.trim()) { this.showToast('Informe o nome do Acesso.', 'error'); return; }
-    this.setState({ saving: true });
-    try {
-      const created = await api.saveAcesso({ nome: f.nome.trim(), descricao: f.descricao, cor: f.cor });
-      this.setState({ showAcessoModal: false });
-      await this.refreshAppData(this.state.currentUser);
-      this.setState({ activeAcessoId: created.id, adminTab: 'categorias' });
-      this.showToast('Acesso criado! Gerencie as categorias e mensagens dele abaixo.', 'success');
-    } catch (e) { this.showToast(e.message, 'error'); } finally { this.setState({ saving: false }); }
-  }
-  async toggleAcessoStatus(id, currentAtivo) {
-    try {
-      await api.toggleAcessoStatus(id, !currentAtivo);
-      await this.refreshAppData(this.state.currentUser);
-    } catch (e) { this.showToast(e.message, 'error'); }
-  }
-  async openUsersModal(acessoId) {
-    this.setState({ showUsersModal: true, usersModalAcessoId: acessoId, acessoUsersLoading: true, acessoUsers: [], allProfiles: [], addUserSelectedId: '', resetPasswordResult: null });
-    await this.reloadUsersModal(acessoId);
-  }
-  async reloadUsersModal(acessoId) {
-    try {
-      const [users, allProfiles] = await Promise.all([api.listAcessoUsers(acessoId), api.listAllProfiles()]);
-      this.setState({ acessoUsers: users, allProfiles, acessoUsersLoading: false });
-    } catch (e) {
-      this.setState({ acessoUsersLoading: false });
-      this.showToast(e.message, 'error');
+    } catch (error) {
+      this.setState({ saving: false });
+      await this.handleError(error, {
+        setFormError: message => this.setState({ categoryError: message }),
+        closeDetail: editingId ? () => this.setState({ showCatModal: false }) : null,
+        retry: () => this.saveCat(),
+      });
     }
   }
-  async addUserToAcesso() {
-    const userId = this.state.addUserSelectedId;
-    const acessoId = this.state.usersModalAcessoId;
-    if (!userId) { this.showToast('Selecione um usuário para vincular.', 'error'); return; }
+
+  /* accesses and memberships */
+
+  openCreateAccess() {
+    this.setState({ showAcessoModal: true, acessoForm: { nome: '', descricao: '', cor: '#1BA7DC' }, accessError: '', accessInvalid: [] });
+  }
+  updateAccessForm(patch) {
+    this.setState(s => ({ acessoForm: { ...s.acessoForm, ...patch }, accessError: '', accessInvalid: [] }));
+  }
+  closeAccessModal() {
+    if (this.state.saving) return;
+    this.setState({ showAcessoModal: false, accessError: '', accessInvalid: [] });
+  }
+  async saveAccess() {
+    if (this.state.saving) return;
+    const f = this.state.acessoForm;
+    if (!f.nome.trim()) {
+      this.setState({ accessError: 'Informe o nome do acesso.', accessInvalid: ['name'] });
+      this.focusFirstInvalid();
+      return;
+    }
+    this.setState({ saving: true });
     try {
-      await api.toggleUserLink(userId, acessoId, false);
-      this.setState({ addUserSelectedId: '' });
-      await this.reloadUsersModal(acessoId);
-      await this.refreshAppData(this.state.currentUser);
-      this.showToast('Usuário vinculado a este acesso.', 'success');
-    } catch (e) { this.showToast(e.message, 'error'); }
+      const created = await api.createAccess({ name: f.nome, description: f.descricao, color: f.cor });
+      this.libraryCache.set(created.id, Promise.resolve({ categories: [], messages: [] }));
+      try { localStorage.setItem('dp_active_acesso', created.id); } catch (e) {}
+      this.setState(s => ({
+        saving: false, showAcessoModal: false, accessError: '',
+        acessos: [...s.acessos, created].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
+        activeAcessoId: created.id,
+        categorias: [], mensagens: [], favoriteIds: [], recentIds: [], categoryFilter: null,
+        adminTab: 'categorias',
+      }));
+      this.showToast('Acesso criado.', 'success');
+    } catch (error) {
+      this.setState({ saving: false });
+      await this.handleError(error, { setFormError: message => this.setState({ accessError: message }) });
+    }
+  }
+  async setAccessStatus(id, active) {
+    try {
+      const updated = await api.setAccessActive(id, active);
+      this.setState(s => ({ acessos: s.acessos.map(access => access.id === id ? updated : access) }));
+      this.libraryCache.delete(id);
+      this.showToast(updated.ativo ? 'Acesso ativado.' : 'Acesso desativado.', 'success');
+      // Deactivating the access on screen moves the library to the next usable one.
+      const next = this.activeAccess();
+      if (next && next.id !== this.state.activeAcessoId) await this.changeActiveAccess(next.id);
+    } catch (error) {
+      await this.handleError(error, { retry: () => this.setAccessStatus(id, active) });
+    }
+  }
+
+  async openAccessUsers(accessId) {
+    this.setState({ accessUsersModal: { ...CLOSED_ACCESS_USERS, open: true, accessId, loading: true } });
+    await this.loadAccessUsers(accessId);
+  }
+  async loadAccessUsers(accessId) {
+    const setModalError = message => this.setState(s => ({ accessUsersModal: { ...s.accessUsersModal, error: message } }));
+    try {
+      const [users, profiles] = await Promise.all([api.listAccessUsers(accessId), api.listProfiles()]);
+      if (this.state.accessUsersModal.accessId !== accessId) return;
+      this.setState(s => ({ accessUsersModal: { ...s.accessUsersModal, users, profiles, loading: false } }));
+    } catch (error) {
+      this.setState(s => ({ accessUsersModal: { ...s.accessUsersModal, loading: false } }));
+      await this.handleError(error, { setFormError: setModalError, refresh: false });
+    }
+  }
+  closeAccessUsers() {
+    if (this.state.accessUsersModal.saving) return;
+    this.setState({ accessUsersModal: CLOSED_ACCESS_USERS });
+  }
+  async addUserToAccess() {
+    const modal = this.state.accessUsersModal;
+    if (modal.saving) return;
+    if (!modal.selectedId) {
+      this.setState(s => ({ accessUsersModal: { ...s.accessUsersModal, error: 'Selecione uma conta para vincular.' } }));
+      return;
+    }
+    await this.changeAccessMembership(modal.selectedId, modal.accessId, true, 'Conta vinculada a este acesso.');
   }
   requestUnlinkUser(user) {
-    this.requestDelete('Remover vínculo', `Remover ${user.nome} deste Acesso? Ele(a) deixará de ver as mensagens e categorias daqui.`, () => this.unlinkUser(user.userId));
+    const accessId = this.state.accessUsersModal.accessId;
+    this.requestConfirmation(
+      'Remover vínculo',
+      `Remover ${user.name} deste acesso? A conta deixará de ver as mensagens e categorias daqui.`,
+      () => this.changeAccessMembership(user.userId, accessId, false, 'Conta removida deste acesso.')
+    );
   }
-  async unlinkUser(userId) {
-    const acessoId = this.state.usersModalAcessoId;
+  async changeAccessMembership(userId, accessId, linked, successMessage) {
+    const sameLink = item => item.userId === userId && item.accessId === accessId;
+    this.setState(s => ({ accessUsersModal: { ...s.accessUsersModal, saving: true, error: '' } }));
     try {
-      await api.toggleUserLink(userId, acessoId, true);
-      await this.reloadUsersModal(acessoId);
-      await this.refreshAppData(this.state.currentUser);
-      this.showToast('Usuário removido deste acesso.', 'success');
-    } catch (e) { this.showToast(e.message, 'error'); }
+      await api.setAccessMembership(userId, accessId, linked);
+      this.setState(s => ({
+        accessUsersModal: { ...s.accessUsersModal, saving: false, selectedId: '' },
+        adminMemberships: [...s.adminMemberships.filter(item => !sameLink(item)), ...(linked ? [{ userId, accessId }] : [])],
+      }));
+      await this.loadAccessUsers(accessId);
+      this.showToast(successMessage, 'success');
+    } catch (error) {
+      this.setState(s => ({ accessUsersModal: { ...s.accessUsersModal, saving: false } }));
+      await this.handleError(error, {
+        setFormError: this.state.accessUsersModal.open
+          ? message => this.setState(s => ({ accessUsersModal: { ...s.accessUsersModal, error: message } }))
+          : null,
+        refresh: () => this.loadAccessUsers(accessId),
+      });
+    }
   }
-  async toggleMemberAdminLocal(userId, value) {
-    const acessoId = this.state.usersModalAcessoId;
-    try {
-      await api.toggleUserAdminLocal(userId, acessoId, value);
-      await this.reloadUsersModal(acessoId);
-      this.showToast(value ? 'Usuário agora é admin deste acesso.' : 'Permissão de admin removida.', 'success');
-    } catch (e) { this.showToast(e.message, 'error'); }
-  }
+
+  /* accounts */
+
   requestResetPassword(user) {
-    this.requestDelete('Redefinir senha', `Gerar uma nova senha temporária para ${user.nome} (${user.email})? A senha atual dele(a) deixará de funcionar.`, () => this.resetUserPassword(user.userId));
+    const name = user.name || user.nome;
+    this.requestConfirmation('Redefinir senha', `Gerar uma nova senha temporária para ${name} (${user.email})? A senha atual deixará de funcionar.`, () => this.resetUserPassword(user.userId));
   }
   async resetUserPassword(userId) {
     try {
       const result = await api.adminResetPassword(userId);
-      if (!result.ok) { this.showToast(result.error || 'Não foi possível redefinir a senha.', 'error'); return; }
-      this.setState({ resetPasswordResult: { userId, tempPassword: result.tempPassword } });
-    } catch (e) { this.showToast(e.message, 'error'); }
+      this.setState({ temporaryPassword: { open: true, value: result.temporaryPassword, copied: false } });
+    } catch (error) {
+      await this.handleError(error);
+    }
   }
-  requestDelete(title, message, action) { this.setState({ confirm: { open: true, title, message, action } }); }
+
+  openCreateAccount() {
+    this.setState({
+      showAccountModal: true,
+      accountForm: { name: '', email: '', temporaryPassword: '', role: 'colaborador', accessIds: new Set() },
+      accountError: '', accountInvalid: [],
+    });
+  }
+  updateAccountForm(field, value) {
+    this.setState(s => ({ accountForm: { ...s.accountForm, [field]: value }, accountError: '', accountInvalid: [] }));
+  }
+  setAccountAccess(accessId, checked) {
+    this.setState(s => {
+      const accessIds = new Set(s.accountForm.accessIds);
+      if (checked) accessIds.add(accessId); else accessIds.delete(accessId);
+      return { accountForm: { ...s.accountForm, accessIds }, accountError: '', accountInvalid: [] };
+    });
+  }
+  closeAccountModal() {
+    if (this.state.saving) return;
+    this.setState({ showAccountModal: false, accountError: '', accountInvalid: [] });
+  }
+  async createAccount() {
+    if (this.state.saving) return;
+    const form = this.state.accountForm;
+    const invalid = [
+      !form.name.trim() && 'name',
+      !form.email.trim() && 'email',
+      form.temporaryPassword.length < 8 && 'temporaryPassword',
+    ].filter(Boolean);
+    if (invalid.length) {
+      this.setState({ accountError: 'Informe nome, e-mail e uma senha temporária com ao menos 8 caracteres.', accountInvalid: invalid });
+      this.focusFirstInvalid();
+      return;
+    }
+    this.setState({ saving: true, accountError: '' });
+    try {
+      const accessIds = [...form.accessIds];
+      const { userId } = await api.adminCreateUser({
+        name: form.name.trim(), email: form.email.trim(), temporaryPassword: form.temporaryPassword,
+        accessIds, role: form.role,
+      });
+      const createdProfile = { id: userId, nome: form.name.trim(), email: form.email.trim().toLowerCase(), role: form.role, ativo: true };
+      this.setState(s => ({
+        saving: false,
+        showAccountModal: false,
+        adminProfiles: [...s.adminProfiles, createdProfile].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
+        adminMemberships: [...s.adminMemberships, ...accessIds.map(accessId => ({ userId, accessId }))],
+        temporaryPassword: { open: true, value: form.temporaryPassword, copied: false },
+        accountForm: { name: '', email: '', temporaryPassword: '', role: 'colaborador', accessIds: new Set() },
+      }));
+      this.showToast('Conta criada.', 'success');
+    } catch (error) {
+      this.setState({ saving: false });
+      await this.handleError(error, { setFormError: message => this.setState({ accountError: message }) });
+    }
+  }
+
+  openMembershipModal(userId) {
+    const linked = this.state.adminMemberships.filter(item => item.userId === userId).map(item => item.accessId);
+    this.setState({ showMembershipModal: true, membershipUserId: userId, membershipDraft: new Set(linked), membershipError: '' });
+  }
+  setMembershipDraft(accessId, checked) {
+    this.setState(s => {
+      const membershipDraft = new Set(s.membershipDraft);
+      if (checked) membershipDraft.add(accessId); else membershipDraft.delete(accessId);
+      return { membershipDraft, membershipError: '' };
+    });
+  }
+  closeMembershipModal() {
+    if (this.state.saving) return;
+    this.setState({ showMembershipModal: false, membershipError: '' });
+  }
+  async saveMemberships() {
+    if (this.state.saving) return;
+    const userId = this.state.membershipUserId;
+    const previous = new Set(this.state.adminMemberships.filter(item => item.userId === userId).map(item => item.accessId));
+    const next = new Set(this.state.membershipDraft);
+    const changed = this.state.acessos.filter(access => previous.has(access.id) !== next.has(access.id));
+    this.setState({ saving: true, membershipError: '' });
+    try {
+      await Promise.all(changed.map(access => api.setAccessMembership(userId, access.id, next.has(access.id))));
+      this.setState(s => ({
+        saving: false,
+        showMembershipModal: false,
+        adminMemberships: [
+          ...s.adminMemberships.filter(item => item.userId !== userId),
+          ...[...next].map(accessId => ({ userId, accessId })),
+        ],
+      }));
+      this.showToast('Liberações atualizadas.', 'success');
+    } catch (error) {
+      this.setState({ saving: false });
+      await this.handleError(error, {
+        setFormError: message => this.setState({ membershipError: `${message} Reabra a conta para conferir o estado atual.` }),
+        refresh: false,
+      });
+      // Some changes may have been applied before the failure.
+      await this.loadStructuralAdmin();
+    }
+  }
+
+  async copyTemporaryPassword() {
+    const value = this.state.temporaryPassword.value;
+    try {
+      await navigator.clipboard.writeText(value);
+      this.setState(s => ({ temporaryPassword: { ...s.temporaryPassword, copied: true } }));
+    } catch {
+      this.showToast('Não foi possível copiar. Selecione a senha e copie manualmente.', 'error');
+    }
+  }
+  closeTemporaryPassword() {
+    this.setState({ temporaryPassword: { open: false, value: '', copied: false } });
+  }
 
   /* ---------------- view (template — identical to prototype) ---------------- */
 
@@ -1150,16 +1772,8 @@ class App {
       </div>`;
     }
     if (v.isNoAcesso) {
-      return `
-      <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:${v.theme.pageBg}; padding:24px;">
-        <div style="width:100%; max-width:420px; background:${v.theme.cardBg}; border:1px solid ${v.theme.border}; border-radius:${v.theme.radiusXl}; padding:40px 36px; text-align:center; box-shadow:${v.theme.shadowMd};">
-          <div style="font-size:17px; font-weight:800; color:${v.theme.text}; margin-bottom:10px; font-family:${v.theme.fontDisplay};">Sem acesso a nenhum departamento</div>
-          <div style="font-size:14px; color:${v.theme.textSecondary}; line-height:1.5; margin-bottom:24px;">
-            Olá, ${esc(v.noAcessoNome)}. Sua conta ainda não está vinculada a nenhum Acesso. Fale com um administrador para liberar seu acesso.
-          </div>
-          <button data-click="${this.h(v.logout)}" style="padding:12px 20px; border-radius:${v.theme.radiusSm}; border:none; background:${v.theme.brandGradient}; color:#fff; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; box-shadow:${v.theme.glow};">Sair</button>
-        </div>
-      </div>` + this.viewModals(v, v.theme, (fn) => this.h(fn));
+      return renderNoAccessView(v, v.theme, (fn) => this.h(fn))
+        + this.viewModals(v, v.theme, (fn) => this.h(fn));
     }
     const t = v.theme;
     const H = (fn) => this.h(fn);
@@ -1178,16 +1792,16 @@ class App {
             <div style="font-size:19px; font-weight:800; color:${t.text}; font-family:${t.fontDisplay};">Padrões de atendimento</div>
             <div style="font-size:14px; color:${t.textSecondary}; margin-top:4px;">Acesse com sua conta para continuar</div>
           </div>
-          ${v.loginError ? `<div style="background:${t.dangerSoft}; color:${t.danger}; font-size:13px; font-weight:600; padding:10px 14px; border-radius:${t.radiusSm}; margin-bottom:16px;">${esc(v.loginError)}</div>` : ''}
+          ${v.loginError ? `<div role="alert" aria-live="assertive" style="background:${t.dangerSoft}; color:${t.danger}; font-size:13px; font-weight:600; padding:10px 14px; border-radius:${t.radiusSm}; margin-bottom:16px;">${esc(v.loginError)}</div>` : ''}
           <div style="display:flex; flex-direction:column; gap:14px;">
             <div>
-              <label style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">E-mail</label>
-              <input type="text" autocapitalize="off" autocorrect="off" spellcheck="false" ${v.loggingIn ? 'disabled' : ''} data-focus="loginEmail" placeholder="seuemail@empresa.com" value="${esc(v.loginEmail)}" data-input="${H(v.onLoginEmailChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 14px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
+              <label for="login-email" style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">E-mail</label>
+              <input id="login-email" name="email" type="email" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" ${v.loggingIn ? 'disabled' : ''} data-focus="loginEmail" placeholder="seuemail@empresa.com" value="${esc(v.loginEmail)}" data-input="${H(v.onLoginEmailChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 14px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
             </div>
             <div>
-              <label style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Senha</label>
+              <label for="login-password" style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Senha</label>
               <div style="position:relative;">
-                <input type="${v.showLoginPassword ? 'text' : 'password'}" ${v.loggingIn ? 'disabled' : ''} data-focus="loginPassword" placeholder="••••••••" value="${esc(v.loginPassword)}" data-input="${H(v.onLoginPasswordChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 44px 12px 14px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
+                <input id="login-password" name="password" autocomplete="current-password" type="${v.showLoginPassword ? 'text' : 'password'}" ${v.loggingIn ? 'disabled' : ''} data-focus="loginPassword" placeholder="••••••••" value="${esc(v.loginPassword)}" data-input="${H(v.onLoginPasswordChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 44px 12px 14px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
                 <button type="button" data-click="${H(v.onToggleLoginPassword)}" tabindex="-1" aria-label="${v.showLoginPassword ? 'Ocultar senha' : 'Mostrar senha'}" title="${v.showLoginPassword ? 'Ocultar senha' : 'Mostrar senha'}" style="position:absolute; right:6px; top:50%; transform:translateY(-50%); border:none; background:transparent; color:${t.textSecondary}; cursor:pointer; padding:6px; display:flex; align-items:center; justify-content:center; border-radius:6px;">${v.showLoginPassword ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.6 18.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a18.6 18.6 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>` : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>`}</button>
               </div>
             </div>
@@ -1268,24 +1882,24 @@ class App {
   viewTopHeader(v, t, H) {
     const showLibraryTools = v.isLib || v.isOver;
     return `
-    <header style="position:sticky; top:0; z-index:40; background:${t.panel}; ${t.glassEffect} border-bottom:1px solid ${t.border}; padding:18px 28px; display:flex; flex-direction:column; gap:16px;">
-      <div style="display:flex; align-items:center; gap:14px;">
+    <header class="dp-top-header" style="position:sticky; top:0; z-index:40; background:${t.panel}; ${t.glassEffect} border-bottom:1px solid ${t.border}; padding:18px 28px; display:flex; flex-direction:column; gap:16px;">
+      <div class="dp-topbar-row" style="display:flex; align-items:center; gap:14px;">
         <h1 style="margin:0; font-size:20px; font-weight:800; letter-spacing:-0.4px; font-family:${t.fontDisplay};">${esc(v.pageTitle)}</h1>
-        ${v.showAcessoSelector ? `
-          <select data-change="${H(v.onChangeActiveAcesso)}" style="padding:8px 12px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-weight:700; font-family:inherit;">
+        ${`
+          <select aria-label="Acesso ativo" data-change="${H(v.onChangeActiveAcesso)}" style="padding:8px 12px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-weight:700; font-family:inherit;">
             ${v.userAcessosOptions.map(opt => `<option value="${esc(opt.id)}" ${opt.id === v.activeAcessoId ? 'selected' : ''}>${esc(opt.nome)}</option>`).join('')}
-          </select>` : ''}
+          </select>`}
         <div style="flex:1;"></div>
         ${showLibraryTools ? `
           <button data-click="${H(v.openPalette)}" title="Busca rápida" style="border:1px solid ${t.border}; background:${t.cardBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:11px; font-weight:700; cursor:pointer; flex-shrink:0;">${esc(v.shortcutLabel)}</button>
           <button data-click="${H(v.openCreateMsg)}" style="display:flex; align-items:center; gap:7px; border:0; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; font-weight:800; font-size:13.5px; padding:11px 18px; cursor:pointer; box-shadow:${t.glow}; flex-shrink:0;">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Nova mensagem
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>${esc(v.createMessageLabel)}
           </button>` : ''}
       </div>
       ${showLibraryTools ? `
         <div style="position:relative; width:100%;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${t.textTertiary}" stroke-width="2.2" stroke-linecap="round" style="position:absolute; left:15px; top:50%; transform:translateY(-50%);"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input data-ref="${H(v.searchInputRef)}" data-focus="search" type="text" placeholder="Buscar mensagem, tag, categoria…  ( / )" value="${esc(v.searchQueryDraft)}" data-input="${H(v.onSearchChange)}" data-focusin="${H(v.onSearchFocus)}" data-focusout="${H(v.onSearchBlur)}" autocomplete="off" style="width:100%; padding:14px 18px 14px 46px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:15px; font-family:inherit;" />
+          <input aria-label="Buscar mensagens" data-ref="${H(v.searchInputRef)}" data-focus="search" type="search" placeholder="Buscar mensagem, tag, categoria…  ( / )" value="${esc(v.searchQueryDraft)}" data-input="${H(v.onSearchChange)}" data-focusin="${H(v.onSearchFocus)}" data-focusout="${H(v.onSearchBlur)}" autocomplete="off" style="width:100%; padding:14px 18px 14px 46px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:15px; font-family:inherit;" />
           ${v.showSearchDropdown ? `
           <div style="position:absolute; top:calc(100% + 6px); left:0; right:0; background:${t.modalSolidBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; box-shadow:${t.shadowLg}; overflow-y:auto; overflow-x:hidden; max-height:min(300px, 45vh); z-index:50;">
             ${v.searchDropdownResults.length ? v.searchDropdownResults.map(r => `
@@ -1321,498 +1935,24 @@ class App {
   }
 
   viewLibrary(v, t, H) {
-    const ic = App.icons(t);
-    const actionBtn = (icon, onClick, label, danger) => `<button data-click="${H(onClick)}" title="${esc(label)}" aria-label="${esc(label)}" style="width:30px; height:30px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:transparent; color:${danger ? t.danger : t.textSecondary}; cursor:pointer; display:flex; align-items:center; justify-content:center;">${icon}</button>`;
-
-    const card = (m) => `
-      <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" class="dp-card" style="position:relative; overflow:hidden; cursor:pointer; background:${t.cardBg}; border:1px solid ${m.borderColor}; border-radius:${t.radiusLg}; padding:${v.cardPadding}; display:flex; flex-direction:column; gap:10px; box-shadow:${t.shadowMd}; break-inside:avoid; margin-bottom:${v.cardGap}px;">
-        <span style="position:absolute; top:0; left:0; height:3px; border-radius:0 3px 3px 0; width:${m.heatWidth}%; background:${t.brandGradient}; opacity:${m.frequencia ? .85 : 0};"></span>
-        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            ${this.avatarIcon(m.catIcon, m.catColor, 26)}
-            <div style="font-size:11px; font-weight:700; color:${t.textSecondary};">${esc(m.categoria)}</div>
-          </div>
-          <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" aria-pressed="${m.isFav}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; line-height:1; display:flex;">${ic.star(m.isFav)}</button>
-        </div>
-        <div style="font-size:15.5px; font-weight:700; color:${t.text}; letter-spacing:-0.2px;">${m.titleSegments.map(seg => `<span style="${seg.style}">${esc(seg.text)}</span>`).join('')}</div>
-        <div>
-          <div style="font-size:13.5px; color:${t.textSecondary}; line-height:1.55; white-space:pre-line; word-break:break-word; overflow-wrap:break-word; max-width:100%; overflow:hidden; max-height:${m.isExpanded ? '2000px' : '63px'}; transition:max-height .25s ease;">${esc(m.displayContent)}</div>
-          ${m.isLong ? `<button data-click="${H(m.onToggleExpand)}" style="border:0; background:transparent; color:${t.accent}; font-size:12px; font-weight:800; cursor:pointer; padding:4px 0 0; text-align:left;">${m.isExpanded ? 'ver menos' : 'ver mais'}</button>` : ''}
-        </div>
-        <div style="display:flex; gap:6px; flex-wrap:wrap;">
-          ${m.tagChips.map(tag => `<button data-click="${H(tag.onClick)}" style="border:0; background:${t.accentSoft}; color:${t.accent}; font-size:11.5px; font-weight:700; border-radius:999px; padding:3px 10px; cursor:pointer;">#${esc(tag.label)}</button>`).join('')}
-        </div>
-        <div style="margin-top:auto; border-top:1px solid ${t.border}; padding-top:10px; display:flex; align-items:center; gap:6px;">
-          <span style="font-size:11.5px; color:${t.textTertiary}; font-weight:700;">usada ${esc(m.frequencia)}x</span>
-          <span style="flex:1;"></span>
-          ${actionBtn(ic.eye, m.onPreview, 'Visualizar')}
-          ${actionBtn(ic.edit, m.onEdit, 'Editar')}
-          ${actionBtn(ic.trash, m.onDelete, 'Excluir', true)}
-          <button data-click="${H(m.onCopy)}" style="display:flex; align-items:center; gap:6px; border:none; background:${m.copyBtnBg}; color:#fff; font-size:12.5px; font-weight:700; padding:7px 13px; border-radius:${t.radiusSm}; cursor:pointer;">${m.copied ? ic.check : ic.clipboard}${esc(m.copyLabel)}</button>
-        </div>
-      </div>`;
-
-    const row = (m) => `
-      <div data-key="${esc(m.id)}" data-click="${H(m.onCardClick)}" style="display:flex; align-items:center; gap:14px; cursor:pointer; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:12px 16px; margin-bottom:8px;">
-        ${this.avatarIcon(m.catIcon, m.catColor, 32)}
-        <div style="flex:1; min-width:0;">
-          <div style="font-size:14px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${m.titleSegments.map(seg => `<span style="${seg.style}">${esc(seg.text)}</span>`).join('')}</div>
-          <div style="font-size:12px; color:${t.textTertiary}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(m.categoria)} · usada ${esc(m.frequencia)}x</div>
-        </div>
-        <button data-click="${H(m.onToggleFav)}" aria-label="${m.isFav ? 'Remover dos favoritos' : 'Favoritar'}" aria-pressed="${m.isFav}" style="border:none; background:transparent; cursor:pointer; color:${m.favColor}; display:flex; flex-shrink:0;">${ic.star(m.isFav)}</button>
-        ${actionBtn(ic.eye, m.onPreview, 'Visualizar')}
-        ${actionBtn(ic.edit, m.onEdit, 'Editar')}
-        ${actionBtn(ic.trash, m.onDelete, 'Excluir', true)}
-        <button data-click="${H(m.onCopy)}" style="display:flex; align-items:center; gap:6px; border:none; background:${m.copyBtnBg}; color:#fff; font-size:12.5px; font-weight:700; padding:7px 13px; border-radius:${t.radiusSm}; cursor:pointer; flex-shrink:0;">${m.copied ? ic.check : ic.clipboard}${esc(m.copyLabel)}</button>
-      </div>`;
-
-    const viewBtn = (active, onClick, path) => `<button data-click="${H(onClick)}" style="border:0; border-radius:8px; padding:6px 10px; cursor:pointer; display:flex; align-items:center; justify-content:center; background:${active ? t.cardBg : 'transparent'}; color:${active ? t.text : t.textTertiary}; box-shadow:${active ? t.shadowSm : 'none'};"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${path}</svg></button>`;
-
-    return `
-    <main data-key="view-library" class="dp-view-enter" style="padding:22px 28px 60px;">
-      <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap;">
-        <div style="font-weight:800; font-size:14px; color:${t.textSecondary};">${esc(v.resultsCountLabel)}</div>
-        <div style="flex:1;"></div>
-        <select data-change="${H(v.onLibrarySortChange)}" style="padding:8px 12px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.cardBg}; color:${t.textSecondary}; font-size:13px; font-weight:700; font-family:inherit; cursor:pointer;">
-          <option value="relevance" ${v.librarySort === 'relevance' ? 'selected' : ''}>Favoritas primeiro</option>
-          <option value="used" ${v.librarySort === 'used' ? 'selected' : ''}>Mais usadas</option>
-          <option value="az" ${v.librarySort === 'az' ? 'selected' : ''}>A → Z</option>
-        </select>
-        <div style="display:flex; gap:3px; background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusSm}; padding:3px;">
-          ${viewBtn(v.isGridView, v.setGridView, '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>')}
-          ${viewBtn(v.isListView, v.setListView, '<path d="M4 6h16M4 12h16M4 18h16"/>')}
-        </div>
-      </div>
-      ${v.hasResults
-        ? (v.isGridView ? `<div style="${v.gridStyle}">${v.cardList.map(card).join('')}</div>` : `<div>${v.cardList.map(row).join('')}</div>`)
-        : `<div style="text-align:center; padding:70px 20px; color:${t.textTertiary};">
-            <div style="display:flex; justify-content:center; margin-bottom:12px;">${ic.search}</div>
-            <div style="font-weight:800; font-size:17px; color:${t.textSecondary};">${v.libraryIsTrulyEmpty ? 'Nenhuma mensagem cadastrada ainda' : 'Nenhuma mensagem encontrada'}</div>
-            <div style="font-size:14px; margin-top:5px;">${v.libraryIsTrulyEmpty ? 'Crie a primeira mensagem para este Acesso.' : 'Ajuste a busca ou os filtros de categoria.'}</div>
-            ${v.libraryIsTrulyEmpty ? `<button data-click="${H(v.openCreateMsg)}" style="margin-top:16px; display:inline-flex; align-items:center; gap:7px; border:0; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; font-weight:800; font-size:13.5px; padding:10px 18px; cursor:pointer; box-shadow:${t.glow};"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Nova mensagem</button>` : ''}
-          </div>`}
-    </main>`;
+    return renderLibraryView(v, t, H);
   }
 
   viewVisaoGeral(v, t, H) {
-    const ic = App.icons(t);
-    const panelHeader = (icon, label, bg, color) => `<div style="display:flex; align-items:center; gap:10px; margin-bottom:18px;"><span style="width:34px; height:34px; border-radius:11px; background:${bg}; color:${color}; display:flex; align-items:center; justify-content:center;">${icon}</span><span style="font-weight:700; font-size:16px; font-family:${t.fontDisplay};">${esc(label)}</span></div>`;
-    const rankRow = (m) => `
-      <div data-click="${H(m.onCopy)}" style="display:flex; align-items:center; gap:12px; cursor:pointer; background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:11px 14px;">
-        <span style="width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px; flex-shrink:0; background:${m.rankColor}2E; color:${m.rankColor};">${m.rank}</span>
-        <span style="flex:1; min-width:0;">
-          <span style="display:block; font-weight:800; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(m.titulo)}</span>
-          <span style="display:flex; align-items:center; gap:8px; margin-top:5px;">
-            <span style="flex:1; height:5px; border-radius:5px; background:${t.border}; overflow:hidden; display:block;"><span style="display:block; height:100%; width:${m.barWidth}%; border-radius:5px; background:${t.brandGradient};"></span></span>
-            <span style="font-size:11px; color:${t.textTertiary}; font-weight:800; white-space:nowrap;">${esc(m.usedLabel)}</span>
-          </span>
-        </span>
-        <button data-click="${H(m.onCopy)}" style="flex-shrink:0; border:none; background:${m.copied ? t.ok : t.brand}; color:#fff; font-size:11px; font-weight:700; padding:6px 12px; border-radius:9px; cursor:pointer;">${esc(m.copyLabel)}</button>
-      </div>`;
-    const plainRow = (m) => `
-      <div data-click="${H(m.onCopy)}" style="display:flex; align-items:center; gap:12px; cursor:pointer; background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:11px 14px;">
-        ${this.avatarIcon(m.catIcon, m.catColor, 30)}
-        <span style="flex:1; min-width:0;">
-          <span style="display:block; font-weight:800; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(m.titulo)}</span>
-          <span style="display:block; font-size:11.5px; color:${t.textTertiary}; font-weight:700;">${esc(m.categoria)}</span>
-        </span>
-        <button data-click="${H(m.onCopy)}" style="flex-shrink:0; border:none; background:${m.copied ? t.ok : t.brand}; color:#fff; font-size:11px; font-weight:700; padding:6px 12px; border-radius:9px; cursor:pointer;">${esc(m.copyLabel)}</button>
-      </div>`;
-    const favTile = (m) => `
-      <button data-click="${H(m.onCopy)}" title="Clique para copiar" style="display:flex; align-items:center; gap:11px; border:1px solid ${m.copied ? t.ok : t.border}; background:${t.inputBg}; border-radius:${t.radiusMd}; padding:11px 13px; cursor:pointer; text-align:left;">
-        ${this.avatarIcon(m.catIcon, m.catColor, 28)}
-        <span style="flex:1; min-width:0;">
-          <span style="display:block; font-weight:800; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:${t.text};">${esc(m.titulo)}</span>
-          <span style="display:block; font-size:11px; color:${t.textTertiary}; font-weight:700;">${esc(m.categoria)}</span>
-        </span>
-        <span style="width:26px; height:26px; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0; background:${m.copied ? t.ok : t.brand}; color:#fff;">${m.copied ? ic.check : ic.clipboard}</span>
-      </button>`;
-
-    return `
-    <main data-key="view-visaogeral" class="dp-view-enter" style="padding:22px 28px 60px; display:flex; flex-direction:column; gap:18px;">
-      <div style="background:${t.brandGradient}; border-radius:${t.radiusXl}; padding:24px 28px; color:#fff; display:flex; align-items:center; gap:20px; flex-wrap:wrap; box-shadow:${t.glow};">
-        <div style="flex:1; min-width:220px;">
-          <div style="font-family:${t.fontDisplay}; font-weight:800; font-size:22px; letter-spacing:-0.4px;">${esc(v.heroGreeting)}</div>
-          <div style="font-size:13.5px; opacity:.85; margin-top:4px;">Copie sua mensagem em segundos — favoritas e mais usadas estão a um clique.</div>
-        </div>
-        <div style="display:flex; gap:16px; flex-wrap:wrap;">
-          ${v.heroStats.map(h => `
-            <div style="text-align:center; background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.22); border-radius:14px; padding:10px 20px;">
-              <div style="font-family:${t.fontDisplay}; font-weight:800; font-size:23px; letter-spacing:-0.4px;">${h.value}</div>
-              <div style="font-size:10.5px; font-weight:800; letter-spacing:1px; opacity:.85;">${esc(h.label)}</div>
-            </div>`).join('')}
-        </div>
-      </div>
-
-      <section style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusXl}; padding:22px; box-shadow:${t.shadowMd};">
-        ${panelHeader(App.icons(t).star ? App.icons(t).star(true, '#8B5CF6') : '', 'Favoritas — copie com 1 clique', 'rgba(139,92,246,.14)', '#8B5CF6')}
-        <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px;">
-          ${v.hasFav ? v.favList.map(favTile).join('') : `<div style="grid-column:1/-1; color:${t.textTertiary}; font-size:13px; text-align:center; border:1px dashed ${t.border}; border-radius:${t.radiusMd}; padding:20px;">Marque mensagens com a estrela para vê-las aqui.</div>`}
-        </div>
-      </section>
-
-      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:18px; align-items:start;">
-        <section style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusXl}; padding:22px; box-shadow:${t.shadowMd};">
-          ${panelHeader(ic.fire, 'Mais usadas', '#E8A10B26', '#E8A10B')}
-          <div style="display:flex; flex-direction:column; gap:10px;">
-            ${v.mostUsedList.length ? v.mostUsedList.map(rankRow).join('') : `<div style="font-size:13px; color:${t.textTertiary};">Nenhuma mensagem usada ainda.</div>`}
-          </div>
-        </section>
-        <section style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusXl}; padding:22px; box-shadow:${t.shadowMd};">
-          ${panelHeader(ic.clock, 'Recentes', t.accentSoft, t.accent)}
-          <div style="display:flex; flex-direction:column; gap:10px;">
-            ${v.hasRecent ? v.recentList.map(plainRow).join('') : `<div style="color:${t.textTertiary}; font-size:13px; text-align:center; border:1px dashed ${t.border}; border-radius:${t.radiusMd}; padding:20px;">Copie uma mensagem e ela aparece aqui.</div>`}
-          </div>
-        </section>
-      </div>
-    </main>`;
+    return renderLibraryOverview(v, t, H);
   }
 
   viewAdmin(v, t, H) {
-    const cols = '150px 1.1fr 1.5fr 80px 150px';
-    const sectionGap = '18px';
-    const sectionHeader = (title, action) => `
-        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:${sectionGap}; gap:12px; flex-wrap:wrap;">
-          <div style="font-size:19px; font-weight:800; font-family:${t.fontDisplay};">${title}</div>
-          ${action || ''}
-        </div>`;
-    const emptyState = (title, desc) => `
-        <div style="text-align:center; padding:60px 20px; background:${t.cardBg}; border:1px dashed ${t.border}; border-radius:${t.radiusLg};">
-          <div style="font-size:16px; font-weight:800; color:${t.text};">${title}</div>
-          <div style="font-size:13px; color:${t.textSecondary}; margin-top:6px;">${desc}</div>
-        </div>`;
-    let content = '';
-
-    if (v.isAdminMsgs) {
-      const msgCard = (row) => `
-        <div data-key="${esc(row.id)}" class="dp-row-card" style="display:flex; flex-direction:column; gap:8px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:14px 16px; box-shadow:${t.shadowSm};">
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-            <div style="font-weight:700; color:${t.accent}; font-size:11.5px;">${esc(row.categoria)}</div>
-            <div style="color:${t.textTertiary}; font-size:11.5px; font-weight:700;">usada ${esc(row.frequencia)}x</div>
-          </div>
-          <div style="font-weight:800; font-size:14.5px;">${esc(row.titulo)}</div>
-          <div style="color:${t.textSecondary}; font-size:12.5px; line-height:1.5; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${esc(row.conteudo)}</div>
-          <div style="display:flex; gap:6px; margin-top:2px;">
-            <button data-click="${H(row.onEdit)}" style="flex:1; border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:7px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Editar</button>
-            <button data-click="${H(row.onDelete)}" style="flex:1; border:none; background:${t.dangerSoft}; color:${t.danger}; font-size:12px; font-weight:700; padding:7px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Excluir</button>
-          </div>
-        </div>`;
-      content = sectionHeader('Mensagens', `
-          <div style="display:flex; gap:10px; align-items:center;">
-            <input type="text" data-focus="adminSearch" placeholder="Buscar…" value="${esc(v.adminSearchQueryDraft)}" data-input="${H(v.onAdminSearchChange)}" style="padding:9px 12px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
-            <button data-click="${H(v.openCreateMsg)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Nova mensagem</button>
-          </div>`);
-      content += v.adminMsgRows.length === 0 ? emptyState('Nenhuma mensagem cadastrada', 'Crie a primeira mensagem para este Acesso.') : (v.adminMsgsNarrow ? `
-        <div style="display:flex; flex-direction:column; gap:10px;">${v.adminMsgRows.map(msgCard).join('')}</div>` : `
-        <div class="dp-table-scroll">
-          <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; overflow:hidden; box-shadow:${t.shadowMd};">
-            <div style="display:grid; grid-template-columns:${cols}; gap:12px; padding:13px 20px; font-size:11px; font-weight:800; color:${t.textTertiary}; letter-spacing:1px; text-transform:uppercase;">
-              <div>Categoria</div><div>Título</div><div>Conteúdo</div><div>Freq.</div><div style="text-align:right;">Ações</div>
-            </div>
-            ${v.adminMsgRows.map(row => `
-              <div data-key="${esc(row.id)}" class="dp-table-row" style="display:grid; grid-template-columns:${cols}; gap:12px; padding:12px 20px; font-size:13.5px; border-top:1px solid ${t.border}; align-items:center;">
-                <div style="font-weight:700; color:${t.accent};">${esc(row.categoria)}</div>
-                <div style="font-weight:800;">${esc(row.titulo)}</div>
-                <div style="color:${t.textSecondary}; font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(row.conteudo)}</div>
-                <div style="color:${t.textSecondary}; font-weight:700;">${esc(row.frequencia)}</div>
-                <div style="display:flex; gap:6px; justify-content:flex-end;">
-                  <button data-click="${H(row.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:6px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Editar</button>
-                  <button data-click="${H(row.onDelete)}" style="border:none; background:${t.dangerSoft}; color:${t.danger}; font-size:12px; font-weight:700; padding:6px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Excluir</button>
-                </div>
-              </div>`).join('')}
-          </div>
-        </div>`);
-    } else if (v.isAdminCats) {
-      content = sectionHeader('Categorias de situação', `<button data-click="${H(v.openCreateCat)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Nova categoria</button>`);
-      content += v.catRows.length === 0 ? emptyState('Nenhuma categoria cadastrada', 'Crie uma categoria para organizar as mensagens.') : `
-        <div style="display:flex; flex-direction:column; gap:10px;">
-          ${v.catRows.map(cat => `
-            <div data-key="${esc(cat.id)}" class="dp-row-card" style="display:flex; align-items:center; justify-content:space-between; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:14px 18px; box-shadow:${t.shadowSm};">
-              <div>
-                <div style="font-weight:800; font-size:14.5px;">${esc(cat.nome)}</div>
-                <div style="font-size:12px; color:${t.textTertiary};">${esc(cat.countLabel)}</div>
-              </div>
-              <div style="display:flex; gap:6px;">
-                <button data-click="${H(cat.onEdit)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:7px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Editar</button>
-                <button data-click="${H(cat.onDelete)}" style="border:none; background:${t.dangerSoft}; color:${t.danger}; font-size:12px; font-weight:700; padding:7px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Excluir</button>
-              </div>
-            </div>`).join('')}
-        </div>`;
-    } else if (v.isAdminAcessos) {
-      content = sectionHeader('Acessos', `<button data-click="${H(v.openCreateAcesso)}" style="border:none; background:${t.brandGradient}; color:#fff; font-size:13px; font-weight:700; padding:10px 16px; border-radius:${t.radiusSm}; cursor:pointer; box-shadow:${t.glow};">+ Novo Acesso</button>`);
-      content += `
-        <div style="display:flex; flex-direction:column; gap:12px;">
-          ${v.acessoRows.map(a => `
-            <div data-key="${esc(a.id)}" class="dp-row-card" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:18px 20px; box-shadow:${t.shadowMd};">
-              <div style="display:flex; align-items:center; gap:14px;">
-                ${this.avatarSquare(a.initial, a.cor, 40)}
-                <div>
-                  <div style="font-weight:800; font-size:15px;">${esc(a.nome)}</div>
-                  <div style="font-size:12px; color:${t.textTertiary}; margin-top:2px;">${esc(a.statsLabel)}</div>
-                </div>
-              </div>
-              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                <div style="font-size:11px; font-weight:800; padding:6px 14px; border-radius:999px; background:${a.statusBg}; color:${a.statusColor};">${esc(a.statusLabel)}</div>
-                <button data-click="${H(a.onUsers)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:8px 14px; border-radius:${t.radiusSm}; cursor:pointer;">Usuários</button>
-                <button data-click="${H(a.onToggleStatus)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:8px 14px; border-radius:${t.radiusSm}; cursor:pointer;">${esc(a.toggleLabel)}</button>
-              </div>
-            </div>`).join('')}
-        </div>`;
-    } else if (v.isAdminSolicitacoes) {
-      const solicCard = (row) => `
-        <div data-key="${esc(row.id)}" class="dp-row-card" style="display:flex; flex-direction:column; gap:6px; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:14px 16px; box-shadow:${t.shadowSm};">
-          <div style="font-weight:800; font-size:14px;">${esc(row.departamento)}</div>
-          <div style="color:${t.textSecondary}; font-size:12.5px;">${esc(row.usuario)} · ${esc(row.tipoLabel)}</div>
-          <div style="color:${t.textTertiary}; font-size:11.5px;">${esc(row.dataLabel)}</div>
-          <button data-click="${H(row.onOpen)}" style="margin-top:4px; border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:7px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Analisar</button>
-        </div>`;
-      content = sectionHeader('Solicitações de Aprovação');
-      content += v.hasSolicitacoes ? (v.adminSolicNarrow ? `
-        <div style="display:flex; flex-direction:column; gap:10px;">${v.solicitacaoRows.map(solicCard).join('')}</div>` : `
-        <div class="dp-table-scroll">
-          <div style="background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; overflow:hidden; box-shadow:${t.shadowMd};">
-            <div style="display:grid; grid-template-columns:1fr 1fr 120px 180px 100px; gap:10px; padding:13px 20px; font-size:11px; font-weight:800; color:${t.textTertiary}; letter-spacing:1px; text-transform:uppercase;">
-              <div>Departamento</div><div>Usuário</div><div>Tipo</div><div>Data</div><div>Ações</div>
-            </div>
-            ${v.solicitacaoRows.map(row => `
-              <div data-key="${esc(row.id)}" class="dp-table-row" style="display:grid; grid-template-columns:1fr 1fr 120px 180px 100px; gap:10px; padding:12px 20px; font-size:13.5px; border-top:1px solid ${t.border}; align-items:center;">
-                <div style="font-weight:800;">${esc(row.departamento)}</div>
-                <div>${esc(row.usuario)}</div>
-                <div style="color:${t.textSecondary};">${esc(row.tipoLabel)}</div>
-                <div style="color:${t.textTertiary}; font-size:12px;">${esc(row.dataLabel)}</div>
-                <div><button data-click="${H(row.onOpen)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-size:12px; font-weight:700; padding:6px 12px; border-radius:${t.radiusSm}; cursor:pointer;">Analisar</button></div>
-              </div>`).join('')}
-          </div>
-        </div>`) : emptyState('Nenhuma solicitação pendente', 'Quando um usuário criar, editar ou pedir exclusão de uma mensagem, aparecerá aqui.');
-    }
-
-    const navIcon = (path) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">${path}</svg>`;
-    const iconMsgs = navIcon('<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/>');
-    const iconCats = navIcon('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>');
-    const iconAcessos = navIcon('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>');
-    const iconSolic = navIcon('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 2 2 4-4"/>');
-    const tabKeyDown = (onClick) => (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } };
-    const tabPill = (icon, label, active, onClick, bg, color, badge) => `
-        <div role="tab" tabindex="0" aria-selected="${active}" data-click="${H(onClick)}" data-keydown="${H(tabKeyDown(onClick))}" style="display:flex; align-items:center; gap:8px; padding:10px 16px; border-radius:999px; cursor:pointer; font-size:13.5px; font-weight:700; background:${bg}; color:${color}; transition:background .2s ease, color .2s ease; white-space:nowrap;">
-          ${icon}${esc(label)}
-          ${badge ? `<span style="background:${t.danger}; color:#fff; font-size:10px; font-weight:800; border-radius:999px; padding:2px 7px;">${badge}</span>` : ''}
-        </div>`;
-
-    return `
-    <main data-key="view-admin" class="dp-admin-layout dp-view-enter" style="padding:22px 28px 60px;">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; background:${t.cardBg}; border:1px solid ${t.border}; border-radius:${t.radiusLg}; padding:10px 14px; margin-bottom:20px; box-shadow:${t.shadowSm};">
-        <div role="tablist" aria-label="Seções do painel administrativo" style="display:flex; gap:6px; flex-wrap:wrap;">
-          ${tabPill(iconMsgs, 'Mensagens', v.isAdminMsgs, v.setAdminTabMsgs, v.tabMsgsBg, v.tabMsgsColor)}
-          ${tabPill(iconCats, 'Categorias', v.isAdminCats, v.setAdminTabCats, v.tabCatsBg, v.tabCatsColor)}
-          ${v.isSuperAdmin ? tabPill(iconAcessos, 'Acessos', v.isAdminAcessos, v.setAdminTabAcessos, v.tabAcessosBg, v.tabAcessosColor) : ''}
-          ${v.isSuperAdmin ? tabPill(iconSolic, v.solicitacoesTabLabel, v.isAdminSolicitacoes, v.setAdminTabSolicitacoes, v.tabSolicitacoesBg, v.tabSolicitacoesColor, v.isSuperAdmin && v.solicitacoesCount > 0 ? v.solicitacoesCount : null) : ''}
-        </div>
-        <div style="font-size:12px; font-weight:700; color:${t.textTertiary}; white-space:nowrap;">Operando em: <span style="color:${t.accent};">${esc(v.activeAcesso.nome)}</span></div>
-      </div>
-      ${content}
-    </main>`;
+    return renderAdminView(v, t, H);
   }
 
   viewModals(v, t, H) {
-    let out = '';
+    let out = renderMessageRequestModal(v.messageRequestModal, t, H);
+    out += renderMessageEditorModal(v.messageEditor, t, H);
+    out += renderAdminConfirmationModal(v.confirmModal, t, H);
+    out += renderRequestReviewModal(v.reviewModal, t, H);
+    out += renderStructuralModals(v.structuralModals, t, H);
     const stay = H(() => {});
-
-    if (v.showMsgModal) {
-      out += `
-      <div role="presentation" data-click="${H(v.closeMsgModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
-        <div role="dialog" aria-modal="true" aria-label="${esc(v.msgModalTitle)}" data-click="${stay}" style="width:100%; max-width:520px; background:${t.modalSolidBg}; border-radius:16px; padding:28px; animation:dp-modal-in .18s ease-out;">
-          <div style="font-size:18px; font-weight:800; margin-bottom:18px;">${esc(v.msgModalTitle)}</div>
-          <div style="display:flex; flex-direction:column; gap:14px;">
-            <div>
-              <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Categoria / Situação</label>
-              <select data-change="${H(v.onMsgCategoriaChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;">
-                ${v.categorias.map(c => `<option value="${esc(c.nome)}" ${c.nome === v.msgForm.categoria ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}
-              </select>
-            </div>
-            <div>
-              <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Título (máx. 100 caracteres)</label>
-              <input type="text" data-ref="${H(v.msgTituloRef)}" data-focus="msgTitulo" maxlength="100" value="${esc(v.msgForm.titulo)}" data-input="${H(v.onMsgTituloChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
-            </div>
-            <div>
-              <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Tags</label>
-              <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;">
-                ${v.msgFormTagChips.map(tag => `<div style="font-size:11px; font-weight:700; color:${t.text}; background:${t.pageBg}; padding:5px 10px; border-radius:999px; display:flex; align-items:center; gap:6px;">${esc(tag.label)}<span role="button" tabindex="0" aria-label="Remover tag ${esc(tag.label)}" data-click="${H(tag.onRemove)}" style="cursor:pointer; color:${t.textSecondary};">×</span></div>`).join('')}
-              </div>
-              <div style="display:flex; gap:8px;">
-                <input type="text" data-focus="msgTagInput" placeholder="adicionar tag e Enter" value="${esc(v.msgForm.tagInput)}" data-input="${H(v.onMsgTagInputChange)}" data-keydown="${H(v.onMsgTagKeyDown)}" style="flex:1; padding:9px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
-                <button data-click="${H(v.addMsgTag)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:12px; font-weight:700; padding:0 14px; border-radius:8px; cursor:pointer;">Add</button>
-              </div>
-            </div>
-            <div>
-              <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Conteúdo (${esc(v.msgContentCount)}/2000)</label>
-              <textarea data-focus="msgConteudo" maxlength="2000" rows="5" data-input="${H(v.onMsgConteudoChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit; resize:vertical;">${esc(v.msgForm.conteudo)}</textarea>
-            </div>
-          </div>
-          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:22px;">
-            <button data-click="${H(v.closeMsgModal)}" style="padding:10px 18px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Cancelar</button>
-            <button data-click="${H(v.saveMsg)}" ${v.saving ? 'disabled' : ''} style="padding:10px 18px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer; opacity:${v.saving ? '0.7' : '1'};">${v.saving ? 'Salvando…' : 'Salvar'}</button>
-          </div>
-        </div>
-      </div>`;
-    }
-
-    if (v.showCatModal) {
-      out += `
-      <div role="presentation" data-click="${H(v.closeCatModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
-        <div role="dialog" aria-modal="true" aria-label="${esc(v.catModalTitle)}" data-click="${stay}" style="width:100%; max-width:400px; background:${t.cardBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
-          <div style="font-size:18px; font-weight:800; margin-bottom:16px;">${esc(v.catModalTitle)}</div>
-          <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Nome da categoria</label>
-          <input type="text" data-ref="${H(v.catNomeRef)}" data-focus="catNome" value="${esc(v.catForm.nome)}" data-input="${H(v.onCatNomeChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
-          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
-            <button data-click="${H(v.closeCatModal)}" style="padding:10px 18px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Cancelar</button>
-            <button data-click="${H(v.saveCat)}" ${v.saving ? 'disabled' : ''} style="padding:10px 18px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer; opacity:${v.saving ? '0.7' : '1'};">${v.saving ? 'Salvando…' : 'Salvar'}</button>
-          </div>
-        </div>
-      </div>`;
-    }
-
-    if (v.showAcessoModal) {
-      out += `
-      <div role="presentation" data-click="${H(v.closeAcessoModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
-        <div role="dialog" aria-modal="true" aria-label="Novo Acesso" data-click="${stay}" style="width:100%; max-width:420px; background:${t.cardBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
-          <div style="font-size:18px; font-weight:800; margin-bottom:16px;">Novo Acesso</div>
-          <div style="display:flex; flex-direction:column; gap:14px;">
-            <div>
-              <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Nome do Acesso</label>
-              <input type="text" data-ref="${H(v.acessoNomeRef)}" data-focus="acessoNome" placeholder="ex: Financeiro" value="${esc(v.acessoForm.nome)}" data-input="${H(v.onAcessoNomeChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
-            </div>
-            <div>
-              <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Descrição (opcional)</label>
-              <input type="text" data-focus="acessoDesc" value="${esc(v.acessoForm.descricao)}" data-input="${H(v.onAcessoDescChange)}" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit;" />
-            </div>
-            <div>
-              <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:8px;">Cor de identificação</label>
-              <div style="display:flex; gap:8px;">
-                ${v.acessoColorOptions.map(c => `<div role="button" tabindex="0" aria-label="Selecionar cor ${esc(c.value)}" data-click="${H(c.onSelect)}" style="width:30px; height:30px; border-radius:8px; background:${c.value}; cursor:pointer; border:${c.border};"></div>`).join('')}
-              </div>
-            </div>
-          </div>
-          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
-            <button data-click="${H(v.closeAcessoModal)}" style="padding:10px 18px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Cancelar</button>
-            <button data-click="${H(v.saveAcesso)}" ${v.saving ? 'disabled' : ''} style="padding:10px 18px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer; opacity:${v.saving ? '0.7' : '1'};">${v.saving ? 'Salvando…' : 'Criar Acesso'}</button>
-          </div>
-        </div>
-      </div>`;
-    }
-
-    if (v.showUsersModal) {
-      out += `
-      <div role="presentation" data-click="${H(v.closeUsersModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
-        <div role="dialog" aria-modal="true" aria-label="Usuários vinculados" data-click="${stay}" style="width:100%; max-width:520px; max-height:90vh; overflow-y:auto; background:${t.modalSolidBg}; border-radius:16px; padding:18px; animation:dp-modal-in .18s ease-out;">
-          <div style="font-size:16px; font-weight:800; margin-bottom:2px;">Usuários vinculados</div>
-          <div style="font-size:12px; color:${t.textSecondary}; margin-bottom:12px;">${esc(v.usersModalAcessoNome)}</div>
-          ${v.acessoUsersLoading
-            ? `<div style="font-size:13px; color:${t.textSecondary};">Carregando…</div>`
-            : `
-              ${v.usersModalRows.length === 0
-                ? `<div style="font-size:13px; color:${t.textSecondary}; margin-bottom:12px;">Nenhum usuário vinculado a este acesso ainda.</div>`
-                : `<div style="display:flex; flex-direction:column; gap:6px; margin-bottom:12px;">
-                    ${v.usersModalRows.map(u => `
-                      <div data-key="${esc(u.userId)}" style="background:${t.pageBg}; border:1px solid ${t.border}; border-radius:${t.radiusSm}; padding:10px 12px;">
-                        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px; margin-bottom:6px;">
-                          <div style="min-width:0;">
-                            <div style="font-weight:700; font-size:13px;">${esc(u.nome)}</div>
-                            <div style="font-size:11px; color:${t.textSecondary}; overflow:hidden; text-overflow:ellipsis;">${esc(u.email)} · ${esc(u.roleLabel)}</div>
-                          </div>
-                          <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; flex-shrink:0;">
-                            <button data-click="${H(u.onToggleAdmin)}" style="border:1px solid ${t.border}; background:${u.isAdminLocal ? t.navy : 'transparent'}; color:${u.isAdminLocal ? '#fff' : t.text}; font-size:10px; font-weight:700; padding:5px 8px; border-radius:5px; cursor:pointer; white-space:nowrap;">${u.isAdminLocal ? 'Sem admin' : 'Admin local'}</button>
-                            <button data-click="${H(u.onResetPassword)}" style="border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:10px; font-weight:700; padding:5px 8px; border-radius:5px; cursor:pointer; white-space:nowrap;">Redefinir</button>
-                            <button data-click="${H(u.onUnlink)}" style="grid-column:1 / -1; border:none; background:#FEE2E2; color:#B91C1C; font-size:10px; font-weight:700; padding:5px 8px; border-radius:5px; cursor:pointer;">Remover deste acesso</button>
-                          </div>
-                        </div>
-                        ${u.justReset ? `
-                          <div style="padding:8px 10px; background:#DCFCE7; border-radius:6px; display:flex; align-items:center; gap:8px; justify-content:space-between;">
-                            <div style="min-width:0;">
-                              <div style="font-size:10px; font-weight:800; color:#166534; text-transform:uppercase; margin-bottom:2px;">Senha temporária (copie agora)</div>
-                              <div style="font-family:monospace; font-size:13px; font-weight:700; color:#14532D; user-select:all;">${esc(u.justReset)}</div>
-                            </div>
-                            <button data-click="${H(u.onCopyTempPassword)}" style="display:flex; align-items:center; gap:5px; border:none; background:${u.tempPasswordCopied ? t.ok : '#166534'}; color:#fff; font-size:11px; font-weight:700; padding:6px 10px; border-radius:6px; cursor:pointer; flex-shrink:0;">${u.tempPasswordCopied ? App.icons(t).check : App.icons(t).clipboard}${u.tempPasswordCopied ? 'Copiado' : 'Copiar'}</button>
-                          </div>` : ''}
-                      </div>`).join('')}
-                  </div>`}
-              <div style="border-top:1px solid ${t.border}; padding-top:10px;">
-                <div style="font-size:11px; font-weight:700; color:${t.textSecondary}; margin-bottom:6px; text-transform:uppercase;">Adicionar usuário</div>
-                <div style="display:flex; gap:6px;">
-                  <select data-change="${H(v.onAddUserSelectChange)}" style="flex:1; padding:8px 8px; border-radius:6px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:12px; font-family:inherit;">
-                    <option value="">Selecione…</option>
-                    ${v.addUserOptions.map(p => `<option value="${esc(p.id)}" ${p.id === v.addUserSelectedId ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}
-                  </select>
-                  <button data-click="${H(v.addUserToAcesso)}" style="border:none; background:${t.navy}; color:#fff; font-size:12px; font-weight:700; padding:0 12px; border-radius:6px; cursor:pointer; white-space:nowrap;">Vincular</button>
-                </div>
-              </div>`}
-          <div style="display:flex; justify-content:flex-end; margin-top:12px;">
-            <button data-click="${H(v.closeUsersModal)}" style="padding:8px 16px; border-radius:6px; border:none; background:${t.navy}; color:#fff; font-size:12px; font-weight:700; cursor:pointer;">Concluir</button>
-          </div>
-        </div>
-      </div>`;
-    }
-
-    if (v.confirm.open) {
-      out += `
-      <div role="presentation" data-click="${H(v.closeConfirm)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:110; padding:20px;">
-        <div role="alertdialog" aria-modal="true" aria-label="${esc(v.confirm.title)}" data-click="${stay}" style="width:100%; max-width:380px; background:${t.cardBg}; border-radius:16px; padding:24px; animation:dp-modal-in .18s ease-out;">
-          <div style="font-size:16px; font-weight:800; margin-bottom:8px;">${esc(v.confirm.title)}</div>
-          <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:20px; line-height:1.5;">${esc(v.confirm.message)}</div>
-          <div style="display:flex; justify-content:flex-end; gap:10px;">
-            <button data-click="${H(v.closeConfirm)}" style="padding:9px 16px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Cancelar</button>
-            <button data-click="${H(v.runConfirm)}" style="padding:9px 16px; border-radius:${t.radiusSm}; border:none; background:${t.danger}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Confirmar</button>
-          </div>
-        </div>
-      </div>`;
-    }
-
-    if (v.showSolicitacaoModal && v.viewingSolicitacao) {
-      const s = v.viewingSolicitacao;
-      const field = (label, before, after) => `
-        <div style="margin-bottom:12px;">
-          <div style="font-size:11px; font-weight:800; color:${t.textSecondary}; text-transform:uppercase; margin-bottom:4px;">${esc(label)}</div>
-          <div style="display:grid; grid-template-columns:${s.isCriacao ? '1fr' : '1fr 1fr'}; gap:10px;">
-            ${s.isCriacao ? '' : `<div style="background:${t.pageBg}; border:1px solid ${t.border}; border-radius:8px; padding:8px 10px; font-size:13px; color:${t.textSecondary}; white-space:pre-wrap;">${esc(before || '—')}</div>`}
-            ${after != null ? `<div style="background:${t.pageBg}; border:1px solid ${t.border}; border-radius:8px; padding:8px 10px; font-size:13px; white-space:pre-wrap;">${esc(after)}</div>` : ''}
-          </div>
-        </div>`;
-      out += `
-      <div role="presentation" data-click="${H(v.closeSolicitacaoModal)}" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:110; padding:20px;">
-        <div role="dialog" aria-modal="true" aria-label="Solicitação de ${esc(s.tipoLabel)}" data-click="${stay}" style="width:100%; max-width:560px; max-height:85vh; overflow-y:auto; background:${t.modalSolidBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
-          <div style="font-size:18px; font-weight:800; margin-bottom:4px;">Solicitação de ${esc(s.tipoLabel)}</div>
-          <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:18px;">${esc(s.departamento)} · ${esc(s.usuario)} · ${esc(s.dataLabel)}</div>
-          ${s.tipoLabel === 'Exclusão' ? `
-            <div style="font-size:13px; margin-bottom:10px;">Mensagem a ser excluída:</div>
-            ${field('Título', s.tituloAnterior, null)}
-            ${field('Conteúdo', s.conteudoAnterior, null)}
-          ` : `
-            ${!s.isCriacao ? `<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:6px;">
-              <div style="font-size:11px; font-weight:800; color:${t.textSecondary}; text-transform:uppercase;">Antes</div>
-              <div style="font-size:11px; font-weight:800; color:${t.textSecondary}; text-transform:uppercase;">Depois</div>
-            </div>` : ''}
-            ${field('Categoria', s.categoriaAnterior, s.categoriaNova)}
-            ${field('Título', s.tituloAnterior, s.tituloNovo)}
-            ${field('Conteúdo', s.conteudoAnterior, s.conteudoNovo)}
-          `}
-          ${s.isRejectMode ? `
-            <div style="margin-top:8px;">
-              <label style="font-size:12px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Motivo da rejeição</label>
-              <textarea data-input="${H(v.onRejectMotivoChange)}" rows="3" style="width:100%; padding:10px 12px; border-radius:8px; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-family:inherit; resize:vertical;">${esc(s.rejectMotivo)}</textarea>
-            </div>
-            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
-              <button data-click="${H(v.cancelReject)}" style="padding:9px 16px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Cancelar</button>
-              <button data-click="${H(v.confirmReject)}" style="padding:9px 16px; border-radius:${t.radiusSm}; border:none; background:${t.danger}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Confirmar rejeição</button>
-            </div>
-          ` : `
-            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:18px;">
-              <button data-click="${H(v.closeSolicitacaoModal)}" style="padding:9px 16px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Fechar</button>
-              <button data-click="${H(v.startReject)}" style="padding:9px 16px; border-radius:${t.radiusSm}; border:none; background:${t.dangerSoft}; color:${t.danger}; font-size:13px; font-weight:700; cursor:pointer;">Rejeitar</button>
-              <button data-click="${H(v.aprovarViewing)}" style="padding:9px 16px; border-radius:${t.radiusSm}; border:none; background:${t.ok}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Aprovar</button>
-            </div>
-          `}
-        </div>
-      </div>`;
-    }
 
     if (v.showApprovalPopup) {
       out += `

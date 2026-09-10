@@ -30,3 +30,6 @@ Thumbs.db
 
 # Worktrees locais de execução isolada
 .worktrees/
+
+# Estado local de sessões de brainstorm (porta e chave de acesso do servidor local)
+.superpowers/brainstorm/
