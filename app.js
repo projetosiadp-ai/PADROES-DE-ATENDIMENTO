@@ -771,8 +771,9 @@ class App {
     };
 
     const sortBy = st.librarySort === 'az' ? 'alfabetica' : st.librarySort === 'used' ? 'frequencia' : 'relevancia';
-    const filtered = selectLibraryMessages(acessoMsgs, {
-      query: st.searchQuery,
+    // One fuzzy scan per render, shared by the library and the search dropdown.
+    const searchMatches = st.searchQuery.trim() ? acessoMsgs.filter(m => this.matchesSearch(m, st.searchQuery)) : acessoMsgs;
+    const filtered = selectLibraryMessages(searchMatches, {
       categoryId: st.categoryFilter,
       sortBy,
     });
@@ -897,18 +898,19 @@ class App {
       searchQueryDraft: st.searchQueryDraft, searchInputRef: (el) => { this.searchEl = el; },
       onSearchChange: (e) => {
         const val = e.target.value;
-        this.setState({ searchQueryDraft: val, libraryVisibleLimit: 30 });
+        // The input already shows what was typed: keep the draft without re-rendering and
+        // render once, after the debounce (SC-003 measured two full renders per search).
+        this.state.searchQueryDraft = val;
         clearTimeout(this._searchDebounce);
-        this._searchDebounce = setTimeout(() => this.setState({ searchQuery: val }), 100);
+        this._searchDebounce = setTimeout(() => this.setState({ searchQuery: val, libraryVisibleLimit: 30 }), 100);
       },
       onSearchFocus: () => this.setState({ searchFocused: true }),
       onSearchBlur: () => this.setState({ searchFocused: false }),
       shortcutLabel: /Mac|iPhone|iPod|iPad/i.test(navigator.platform || '') ? '⌘K' : 'Ctrl K',
 
       searchDropdownResults: (() => {
-        const query = st.searchQuery.trim();
-        if (!query) return [];
-        return acessoMsgs.filter(m => this.matchesSearch(m, query))
+        if (!st.searchFocused || !st.searchQuery.trim()) return [];
+        return [...searchMatches]
           .sort((a, b) => b.frequencia - a.frequencia)
           .slice(0, 6)
           .map(m => ({

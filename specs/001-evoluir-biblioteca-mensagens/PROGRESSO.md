@@ -217,10 +217,12 @@ A validação funcional da User Story 5 foi concluída até a T057. O próximo p
 - T074: `@supabase/supabase-js` fixado em `2.112.4` (versão exata) no manifesto/lockfile e
   `vendor/supabase.js` substituído pelo UMD dessa versão. Regressão: `dependency-pin.test.mjs`.
 - T075 permanece aberta: depende de autorização explícita para preview/release.
-- Pendência de verificação: o gate a 360 px (`mobile.spec.mjs`) ficou não conclusivo por falta de
-  recursos na máquina (Auth local sem resposta, 345 MB de RAM livre, outra stack Supabase ativa).
-  Unidade, banco, E2E funcional, a11y desktop e desempenho passaram. Repetir `npm run test:a11y`
-  depois de liberar memória e, idealmente, após `npx supabase db reset` local autorizado (T066).
+- Quickstart com banco recriado (T066), após aprovação do `db reset` local: unidade (46), banco
+  (72 asserções), E2E (42), acessibilidade (9, incluindo 360 px claro/escuro) e desempenho em 3
+  rodadas passaram. A pendência anterior de 360 px era causada pelo banco acumulado.
+- Busca otimizada com base em perfil de CPU: um render por busca e uma única varredura aproximada
+  (p95 de até 945 ms para 253–296 ms). Teste `@perf` passou a esperar o sinal `dp-search-ready` e o
+  runner do Lighthouse informa o motivo de relatórios parciais. Detalhes em `validation-results.md`.
 
 ### Gate consolidado mais recente
 

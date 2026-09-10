@@ -79,6 +79,38 @@ Desvios e correções desta rodada:
   em memória e não foi alterada nesta fase. Recomenda-se nova medição com banco recriado.
 - O JavaScript transferido subiu ≈18 KB pela atualização do supabase-js.
 
+## Quickstart com banco recriado (T066, 2026-09-10)
+
+Executado após aprovação explícita do `db reset` local. Alvo confirmado antes do reset:
+API `http://127.0.0.1:54421`, banco `127.0.0.1:54422`; nenhum comando usou `--linked`.
+
+| Comando | Resultado |
+|---|---|
+| `npx supabase db reset` | Passou em 67 s; 6 migrações aplicadas em ordem e alinhadas (`migration list --local`); seed: 3 acessos, 4 contas, 3 mensagens, 0 solicitações pendentes. |
+| Edge Functions locais | Responderam (200) após o reset, sem `functions serve` adicional. |
+| `npm run test:unit` | Passou: 46 testes. |
+| `npm run test:db` | Passou: 4 arquivos, 72 asserções pgTAP. |
+| `npm run test:e2e` | Passou: 42 cenários, 18 combinações ignoradas pela matriz, em 6,2 min (12,1 min com o banco acumulado). |
+| `npm run test:a11y` | Passou: 9 cenários, incluindo teclado, temas e cartões a 360 px claro/escuro; a pendência de 360 px anterior era causada pelo banco acumulado. |
+| `npm run seed:scale` | Passou: 100 contas, 10 acessos, 1.000 mensagens. |
+| `npx supabase migration list --local` | Passou: 6 migrações locais alinhadas. |
+| `npx supabase db push --local --dry-run` | Passou: `Local database is up to date`, nenhuma migração, seed ou papel pendente. |
+| `npx supabase stop` | Passou: somente a stack `padroes-de-atendimento` foi parada, com backup dos volumes. |
+| `npm run test:perf` | Passou em 3 rodadas consecutivas após `seed:scale`: carga p75 1.615/1.403/1.515 ms; busca p95 296/253/283 ms; cópia p95 235/225/289 ms; Lighthouse JS 111.639 bytes e total 136.254 bytes, nota 0,87–0,97. |
+
+Desvios corrigidos nesta execução:
+
+- **SC-003 reprovava com o banco limpo** (busca p95 514 e 945 ms em 2 de 3 rodadas). O perfil de CPU
+  mostrou dois renders completos por busca (um só para o rascunho do campo) e duas varreduras
+  aproximadas por render (biblioteca e dropdown). `app.js` agora renderiza uma vez após o debounce e
+  compartilha uma única varredura; os resultados são idênticos. Busca p95 passou a 253–296 ms.
+- **Falsa medição no teste de desempenho:** cada rodada copia a mensagem 0001 e eleva sua frequência;
+  após várias rodadas ela entrou no top 30 (frequência 23, posição 22) e ficava visível sem busca, e o
+  teste media antes do render filtrado. O teste agora espera o sinal `dp-search-ready` do app.
+- **Lighthouse parcial:** uma execução retornou relatório sem `resource-summary`, quebrando o runner
+  com `TypeError`. Três execuções isoladas vieram completas; o runner agora falha com o motivo
+  informado pelo Lighthouse.
+
 ## Pendências externas
 
 - Teste moderado com 20 participantes (SC-001/SC-010).

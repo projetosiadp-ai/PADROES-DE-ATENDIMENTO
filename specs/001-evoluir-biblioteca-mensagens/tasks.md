@@ -189,7 +189,7 @@ description: "Tarefas de implementação da evolução da biblioteca de mensagen
 - [X] T063 Otimizar somente regressões comprovadas por T062 no carregamento seletivo e renderização em `api.js`, `app.js`, `domain/library.mjs` e `views/library-view.mjs`
 - [X] T064 [P] Criar `vercel.json` com CSP, `X-Robots-Tag`, `nosniff`, referrer policy, proteção contra framing e cache compatível, além da meta `robots` em `index.html`
 - [X] T065 Regenerar o snapshot consolidado a partir das migrações em `supabase/schema.sql` e verificar que ele não reintroduz exclusão física, `user` ou capacidade de admin local
-- [ ] T066 Executar todos os comandos de `specs/001-evoluir-biblioteca-mensagens/quickstart.md` localmente e registrar resultados, versões e desvios corrigidos em `specs/001-evoluir-biblioteca-mensagens/validation-results.md`
+- [X] T066 Executar todos os comandos de `specs/001-evoluir-biblioteca-mensagens/quickstart.md` localmente e registrar resultados, versões e desvios corrigidos em `specs/001-evoluir-biblioteca-mensagens/validation-results.md`
 - [ ] T067 Conduzir o teste moderado com 20 colaboradores e registrar somente métricas agregadas de SC-001/SC-010 em `specs/001-evoluir-biblioteca-mensagens/usability-results.md`
 - [X] T068 Preparar checklist de preview, backup, `db push --dry-run`, identificador do deploy anterior, smoke test e rollback em `specs/001-evoluir-biblioteca-mensagens/release-checklist.md`
 

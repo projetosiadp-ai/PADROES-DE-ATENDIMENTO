@@ -56,6 +56,9 @@ test('@perf biblioteca atende aos limites de carga, busca e cópia em cinco medi
       performance.mark('dp-search-start');
     });
     await search.fill('MENSAGEM DE ESCALA 0001');
+    // Each run copies this card and raises its usage count, so it can already be on the initial
+    // screen; wait for the app's own signal that the filtered results were rendered.
+    await page.waitForFunction(() => performance.getEntriesByName('dp-search-ready').length > 0);
     await expect(scaleCard).toBeVisible();
     searchMeasurements.push(Math.round(await page.evaluate(() =>
       performance.getEntriesByName('dp-search-ready')[0].startTime

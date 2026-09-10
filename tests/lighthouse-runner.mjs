@@ -31,7 +31,12 @@ try {
       screenEmulation: { mobile: true, width: 360, height: 800, deviceScaleFactor: 2, disabled: false },
     });
     const lhr = audit.lhr;
-    const resources = lhr.audits['resource-summary'].details.items;
+    const resources = lhr.audits['resource-summary']?.details?.items;
+    if (!resources) {
+      // Lighthouse occasionally returns a partial report; surface its own reason instead of a TypeError.
+      const reason = lhr.runtimeError?.message ?? lhr.audits['resource-summary']?.errorMessage ?? 'motivo não informado';
+      throw new Error(`Lighthouse (execução ${run}) não produziu o resumo de recursos: ${reason}`);
+    }
     const scripts = resources.find(item => item.resourceType === 'script')?.transferSize ?? 0;
     const total = resources.find(item => item.resourceType === 'total')?.transferSize ?? 0;
     results.push({ run, scripts, total, performance: lhr.categories.performance.score });
