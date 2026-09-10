@@ -1,0 +1,31 @@
+{
+  "name": "padroes-de-atendimento",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25",
+    "npm": ">=10 <11"
+  },
+  "packageManager": "npm@10.9.8",
+  "scripts": {
+    "serve": "serve . --listen tcp://127.0.0.1:4173 --no-clipboard --no-port-switching",
+    "test:unit": "node --test \"tests/**/*.test.mjs\"",
+    "test:db": "supabase test db",
+    "test:e2e": "playwright test --grep-invert \"@a11y|@perf\"",
+    "test:a11y": "playwright test --grep @a11y",
+    "test:perf": "playwright test --grep @perf && node tests/lighthouse-runner.mjs",
+    "seed:scale": "node tests/fixtures/scale.mjs",
+    "test:all": "npm run test:unit && npm run test:db && npm run test:e2e && npm run test:a11y && npm run test:perf"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@lhci/cli": "0.15.1",
+    "@playwright/test": "1.62.1",
+    "serve": "14.2.6",
+    "supabase": "2.116.0"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.112.4"
+  }
+}

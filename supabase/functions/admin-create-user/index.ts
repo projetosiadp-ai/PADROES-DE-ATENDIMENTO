@@ -1,89 +1,105 @@
-// supabase/functions/admin-create-user/index.ts
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+const jsonHeaders = { ...corsHeaders, "Content-Type": "application/json" };
+const allowedRoles = new Set(["colaborador", "superadmin"]);
+
+function respond(status: number, body: Record<string, unknown>) {
+  return new Response(JSON.stringify(body), { status, headers: jsonHeaders });
+}
+
+function restHeaders(serviceRoleKey: string, prefer?: string) {
+  return {
+    apikey: serviceRoleKey,
+    Authorization: `Bearer ${serviceRoleKey}`,
+    "Content-Type": "application/json",
+    ...(prefer ? { Prefer: prefer } : {}),
+  };
+}
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return respond(405, { error: "Método não permitido." });
 
   try {
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: "Não autenticado." }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (!authHeader?.startsWith("Bearer ")) return respond(401, { error: "Não autenticado." });
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !anonKey || !serviceRoleKey) return respond(500, { error: "Serviço de contas indisponível." });
 
-    const callerClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
+    const callerResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: { Authorization: authHeader, apikey: anonKey },
     });
-    const { data: { user: caller }, error: callerErr } = await callerClient.auth.getUser();
-    if (callerErr || !caller) {
-      return new Response(JSON.stringify({ error: "Sessão inválida." }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (!callerResponse.ok) return respond(401, { error: "Sessão inválida." });
+    const caller = await callerResponse.json();
 
-    const adminClient = createClient(supabaseUrl, serviceRoleKey);
-
-    const { data: callerProfile } = await adminClient
-      .from("profiles").select("role").eq("id", caller.id).single();
-    if (!callerProfile || callerProfile.role !== "superadmin") {
-      return new Response(JSON.stringify({ error: "Apenas administradores podem criar usuários." }), {
-        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const body = await req.json();
-    const { nome, email, senha, role, acessoId, isAdminLocal } = body;
-    if (!nome || !email || !senha || !acessoId) {
-      return new Response(JSON.stringify({ error: "Preencha nome, e-mail, senha e acesso." }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
-      email, password: senha, email_confirm: true, user_metadata: { nome },
+    const callerQuery = new URLSearchParams({ select: "role,ativo", id: `eq.${caller.id}` });
+    const callerProfileResponse = await fetch(`${supabaseUrl}/rest/v1/profiles?${callerQuery}`, {
+      headers: restHeaders(serviceRoleKey),
     });
-    if (createErr || !created.user) {
-      return new Response(JSON.stringify({ error: createErr?.message || "Falha ao criar usuário." }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    const callerProfiles = callerProfileResponse.ok ? await callerProfileResponse.json() : [];
+    if (callerProfiles[0]?.role !== "superadmin" || callerProfiles[0]?.ativo !== true) {
+      return respond(403, { error: "Apenas superadministradores ativos podem criar contas." });
     }
 
-    if (role === "superadmin") {
-      const { error: roleErr } = await adminClient.from("profiles").update({ role: "superadmin" }).eq("id", created.user.id);
-      if (roleErr) {
-        return new Response(JSON.stringify({ error: `Usuário criado, mas falhou ao definir papel: ${roleErr.message}` }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+    const body = await req.json().catch(() => null);
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    const temporaryPassword = typeof body?.temporaryPassword === "string" ? body.temporaryPassword : "";
+    const role = body?.role ?? "colaborador";
+    const accessIds = Array.isArray(body?.accessIds)
+      ? [...new Set(body.accessIds.filter((id: unknown) => typeof id === "string" && id.length > 0))]
+      : [];
+    if (!name || !email || temporaryPassword.length < 8 || !allowedRoles.has(role)) {
+      return respond(400, { error: "Informe nome, e-mail, senha temporária válida e papel permitido." });
+    }
+
+    if (accessIds.length) {
+      const accessQuery = new URLSearchParams({ select: "id", id: `in.(${accessIds.join(",")})` });
+      const accessResponse = await fetch(`${supabaseUrl}/rest/v1/acessos?${accessQuery}`, { headers: restHeaders(serviceRoleKey) });
+      const accesses = accessResponse.ok ? await accessResponse.json() : [];
+      if (accesses.length !== accessIds.length) return respond(400, { error: "Um ou mais acessos informados são inválidos." });
+    }
+
+    const createResponse = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+      method: "POST",
+      headers: restHeaders(serviceRoleKey),
+      body: JSON.stringify({ email, password: temporaryPassword, email_confirm: true, user_metadata: { nome: name } }),
+    });
+    if (!createResponse.ok) return respond(400, { error: "Não foi possível criar a conta. Verifique se o e-mail já está em uso." });
+    const created = await createResponse.json();
+    const userId = created.id;
+    const rollback = () => fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+      method: "DELETE", headers: restHeaders(serviceRoleKey),
+    });
+
+    const profileQuery = new URLSearchParams({ id: `eq.${userId}` });
+    const updateResponse = await fetch(`${supabaseUrl}/rest/v1/profiles?${profileQuery}`, {
+      method: "PATCH", headers: restHeaders(serviceRoleKey),
+      body: JSON.stringify({ nome: name, email, role, ativo: true }),
+    });
+    if (!updateResponse.ok) {
+      await rollback();
+      return respond(500, { error: "Não foi possível concluir a criação da conta." });
+    }
+
+    if (accessIds.length) {
+      const membershipResponse = await fetch(`${supabaseUrl}/rest/v1/acesso_membros`, {
+        method: "POST", headers: restHeaders(serviceRoleKey),
+        body: JSON.stringify(accessIds.map(accessId => ({ acesso_id: accessId, user_id: userId }))),
+      });
+      if (!membershipResponse.ok) {
+        await rollback();
+        return respond(500, { error: "Não foi possível concluir os vínculos da conta." });
       }
     }
 
-    const { error: linkErr } = await adminClient.from("acesso_membros").insert({
-      acesso_id: acessoId, user_id: created.user.id, is_admin_local: !!isAdminLocal,
-    });
-    if (linkErr) {
-      return new Response(JSON.stringify({ error: `Usuário criado, mas falhou ao vincular ao acesso: ${linkErr.message}` }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    return new Response(JSON.stringify({ ok: true, userId: created.user.id }), {
-      status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return respond(200, { userId });
+  } catch {
+    return respond(500, { error: "Não foi possível concluir a criação da conta." });
   }
 });
