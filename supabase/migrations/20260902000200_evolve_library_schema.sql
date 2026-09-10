@@ -1,14 +1,15 @@
 -- Additive schema evolution. Legacy columns remain available during rollout.
 
+-- The legacy check only accepts ('superadmin', 'user'): drop it before converting roles.
+alter table public.profiles
+  drop constraint if exists profiles_role_check;
+
 update public.profiles
 set role = 'colaborador'
 where role = 'user';
 
 alter table public.profiles
   alter column role set default 'colaborador';
-
-alter table public.profiles
-  drop constraint if exists profiles_role_check;
 
 alter table public.profiles
   add constraint profiles_role_check
@@ -193,23 +194,24 @@ update public.solicitacoes_mensagem
 set idempotency_key = gen_random_uuid()
 where idempotency_key is null;
 
+alter table public.solicitacoes_mensagem
+  alter column idempotency_key set not null;
+
+-- The legacy checks reject 'arquivamento': drop them before converting pending deletions.
+alter table public.solicitacoes_mensagem
+  drop constraint if exists solicitacoes_mensagem_tipo_check;
+
+alter table public.solicitacoes_mensagem
+  drop constraint if exists solicitacoes_mensagem_tipo_mensagem_ck;
+
 update public.solicitacoes_mensagem
 set tipo = 'arquivamento'
 where tipo = 'exclusao'
   and status = 'pendente';
 
 alter table public.solicitacoes_mensagem
-  alter column idempotency_key set not null;
-
-alter table public.solicitacoes_mensagem
-  drop constraint if exists solicitacoes_mensagem_tipo_check;
-
-alter table public.solicitacoes_mensagem
   add constraint solicitacoes_mensagem_tipo_check
   check (tipo in ('criacao', 'edicao', 'arquivamento', 'exclusao'));
-
-alter table public.solicitacoes_mensagem
-  drop constraint if exists solicitacoes_mensagem_tipo_mensagem_ck;
 
 alter table public.solicitacoes_mensagem
   add constraint solicitacoes_mensagem_tipo_mensagem_ck
