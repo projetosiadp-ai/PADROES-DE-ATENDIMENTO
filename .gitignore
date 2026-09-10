@@ -1,0 +1,32 @@
+node_modules/
+dist/
+build/
+coverage/
+
+# Configuração e credenciais locais
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.supabase/
+supabase/.temp/
+
+# Artefatos de testes e ferramentas
+playwright-report/
+test-results/
+blob-report/
+.lighthouseci/
+tests/.auth/
+*.log
+
+# Arquivos de editor e sistema operacional
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+
+# Worktrees locais de execução isolada
+.worktrees/
