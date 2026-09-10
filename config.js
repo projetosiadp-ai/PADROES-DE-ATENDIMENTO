@@ -7,5 +7,5 @@ export const SUPABASE_URL = IS_LOCAL
   ? 'http://127.0.0.1:54421'
   : 'https://hikxdpfctldkidhjjexj.supabase.co';
 export const SUPABASE_ANON_KEY = IS_LOCAL
-  ? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYXNlLWRlbW8iLCJyb2xlIjoiYW5vbiIsImV4cCI6MTk4MzgxMjk5Nn0.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0'
+  ? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0'
   : 'sb_publishable_gZCaP4yeM4EQU0GHKSPYnA_fC3B1WsY';
