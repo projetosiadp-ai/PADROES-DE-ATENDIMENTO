@@ -1,8 +1,12 @@
+import { ICONS } from '../ui/icons.mjs';
+
 const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
+
+const actionButton = (icon, label, handler, theme, register) => `<button data-click="${register(handler)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" style="width:30px;height:30px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid ${theme.border};border-radius:${theme.radiusSm};background:transparent;color:${theme.textSecondary};">${icon}</button>`;
 
 function messageCard(message, model, theme, register) {
   const title = message.titleSegments
@@ -25,13 +29,13 @@ function messageCard(message, model, theme, register) {
       <div style="font-size:15.5px;font-weight:700;color:${theme.text};">${title}</div>
       <div style="font-size:13.5px;color:${theme.textSecondary};line-height:1.55;white-space:pre-line;overflow-wrap:anywhere;">${escapeHtml(message.displayContent)}</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">${tags}</div>
-      <div class="dp-card-actions" style="border-top:1px solid ${theme.border};padding-top:10px;display:flex;align-items:center;gap:6px;">
+      <div class="dp-card-actions" style="border-top:1px solid ${theme.border};padding-top:10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
         <span style="font-size:11.5px;color:${theme.textTertiary};font-weight:700;">usada ${escapeHtml(message.frequencia)}x</span>
         <span style="flex:1"></span>
-        <button data-click="${register(message.onPreview)}" aria-label="Visualizar">Visualizar</button>
-        <button data-click="${register(message.onEdit)}" aria-label="${escapeHtml(message.editLabel)}">${escapeHtml(message.editLabel)}</button>
-        <button data-click="${register(message.onArchive)}" aria-label="${escapeHtml(message.archiveLabel)}">${escapeHtml(message.archiveLabel)}</button>
-        <button data-click="${register(message.onCopy)}" style="border:0;background:${message.copyBtnBg};color:#fff;font-weight:700;padding:7px 13px;border-radius:${theme.radiusSm};">${escapeHtml(message.copyLabel)}</button>
+        ${actionButton(ICONS.eye, 'Visualizar', message.onPreview, theme, register)}
+        ${actionButton(ICONS.edit, message.editLabel, message.onEdit, theme, register)}
+        ${actionButton(ICONS.archive, message.archiveLabel, message.onArchive, theme, register)}
+        <button data-click="${register(message.onCopy)}" style="display:flex;align-items:center;gap:6px;flex-shrink:0;white-space:nowrap;border:0;background:${message.copyBtnBg};color:#fff;font-size:12.5px;font-weight:700;padding:7px 13px;border-radius:${theme.radiusSm};">${message.copied ? ICONS.check : ICONS.clipboard}${escapeHtml(message.copyLabel)}</button>
       </div>
     </article>`;
 }
