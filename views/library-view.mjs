@@ -6,49 +6,74 @@ const escapeHtml = (value) => String(value ?? '')
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;');
 
-const actionButton = (icon, label, handler, theme, register) => `<button data-click="${register(handler)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" style="width:30px;height:30px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0;border:1px solid ${theme.border};border-radius:${theme.radiusSm};background:transparent;color:${theme.textSecondary};">${icon}</button>`;
+const titleHtml = (segments) => segments
+  .map(segment => (segment.highlight
+    ? `<mark class="dp-highlight">${escapeHtml(segment.text)}</mark>`
+    : escapeHtml(segment.text)))
+  .join('');
 
-function messageCard(message, model, theme, register) {
-  const title = message.titleSegments
-    .map(segment => `<span style="${segment.style}">${escapeHtml(segment.text)}</span>`)
-    .join('');
-  const tags = message.tagChips
-    .map(tag => `<button data-click="${register(tag.onClick)}" style="border:0;background:${theme.accentSoft};color:${theme.accent};border-radius:999px;padding:3px 10px;">#${escapeHtml(tag.label)}</button>`)
-    .join('');
+function listItem(message, register) {
+  const star = message.isFav
+    ? `<span class="dp-list-item__star dp-list-item__star--on" aria-hidden="true">${ICONS.starOn}</span><span class="sr-only">Favorita</span>`
+    : `<span class="dp-list-item__star" aria-hidden="true">${ICONS.starOff}</span>`;
 
   return `
-    <article aria-label="${escapeHtml(message.titleText)}" tabindex="0"
-      data-testid="message-card-${escapeHtml(message.id)}" data-key="${escapeHtml(message.id)}"
-      data-click="${register(message.onCardClick)}" data-keydown="${register(message.onCardKeyDown)}"
-      class="dp-card" style="cursor:pointer;background:${theme.cardBg};border:1px solid ${message.borderColor};border-radius:${theme.radiusLg};padding:${model.cardPadding};display:flex;flex-direction:column;gap:10px;box-shadow:${theme.shadowMd};break-inside:avoid;margin-bottom:${model.cardGap}px;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:11px;font-weight:700;color:${theme.textSecondary};">${escapeHtml(message.categoria)}</span>
-        <span style="flex:1"></span>
-        <button data-click="${register(message.onToggleFav)}" aria-label="${message.isFav ? 'Remover dos favoritos' : 'Favoritar'}" aria-pressed="${message.isFav}" style="border:0;background:transparent;color:${message.favColor};font-size:20px;">${message.isFav ? '★' : '☆'}</button>
-      </div>
-      <div style="font-size:15.5px;font-weight:700;color:${theme.text};">${title}</div>
-      <div style="font-size:13.5px;color:${theme.textSecondary};line-height:1.55;white-space:pre-line;overflow-wrap:anywhere;">${escapeHtml(message.displayContent)}</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;">${tags}</div>
-      <div class="dp-card-actions" style="border-top:1px solid ${theme.border};padding-top:10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-        <span style="font-size:11.5px;color:${theme.textTertiary};font-weight:700;">usada ${escapeHtml(message.frequencia)}x</span>
-        <span style="flex:1"></span>
-        ${actionButton(ICONS.eye, 'Visualizar', message.onPreview, theme, register)}
-        ${actionButton(ICONS.edit, message.editLabel, message.onEdit, theme, register)}
-        ${actionButton(ICONS.archive, message.archiveLabel, message.onArchive, theme, register)}
-        <button data-click="${register(message.onCopy)}" style="display:flex;align-items:center;gap:6px;flex-shrink:0;white-space:nowrap;border:0;background:${message.copyBtnBg};color:#fff;font-size:12.5px;font-weight:700;padding:7px 13px;border-radius:${theme.radiusSm};">${message.copied ? ICONS.check : ICONS.clipboard}${escapeHtml(message.copyLabel)}</button>
-      </div>
-    </article>`;
+    <li data-key="item-${escapeHtml(message.id)}">
+      <button class="dp-list-item" data-testid="message-item-${escapeHtml(message.id)}"
+        data-click="${register(message.onSelect)}"${message.selected ? ' aria-current="true"' : ''}>
+        <span style="min-width:0;">
+          <span class="dp-list-item__title">${titleHtml(message.titleSegments)}</span>
+          <span class="dp-list-item__meta" data-volatile>${escapeHtml(message.metaLabel)}</span>
+        </span>
+        ${star}
+      </button>
+    </li>`;
 }
 
-export function renderLibraryView(model, theme, register) {
-  const controls = `
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
-      <div style="font-weight:800;font-size:14px;color:${theme.textSecondary};">${escapeHtml(model.resultsCountLabel)}</div>
-      <span style="flex:1"></span>
-      <select aria-label="Filtrar por categoria" data-change="${register(model.onCategoryFilterChange)}">
-        <option value="" ${model.categoryFilter ? '' : 'selected'}>Todas as categorias</option>
-        ${model.categoryOptions.map(category => `<option value="${escapeHtml(category.id)}" ${category.id === model.categoryFilter ? 'selected' : ''}>${escapeHtml(category.nome)}</option>`).join('')}
-      </select>
+function readingActions(reading, register) {
+  return `
+    <div class="dp-reading__actions">
+      <button class="dp-btn-accent" data-click="${register(reading.onCopy)}">${reading.copied ? ICONS.check : ICONS.clipboard}${escapeHtml(reading.copyLabel)}</button>
+      <button class="dp-btn-secondary" data-click="${register(reading.onPreview)}">${ICONS.eye}Visualizar</button>
+      <button class="dp-btn-ghost" data-click="${register(reading.onEdit)}">${escapeHtml(reading.editLabel)}</button>
+      <button class="dp-btn-ghost" data-click="${register(reading.onArchive)}">${escapeHtml(reading.archiveLabel)}</button>
+    </div>`;
+}
+
+function readingBody(reading, register, { asDialog = false } = {}) {
+  // No celular a leitura abre como diálogo: o foco inicial vai para o título (ui-behavior.md).
+  const headingAttrs = asDialog ? ' tabindex="-1" data-initial-focus' : '';
+  const tags = reading.tagChips.length
+    ? `<div class="dp-reading__tags">${reading.tagChips.map(tag => `<button data-click="${register(tag.onClick)}">#${escapeHtml(tag.label)}</button>`).join('')}</div>`
+    : '';
+
+  return `
+    <div class="dp-kicker">${escapeHtml(reading.categoria)}</div>
+    <h2${headingAttrs}>${escapeHtml(reading.titulo)}</h2>
+    <div class="dp-reading__text">${escapeHtml(reading.conteudo)}</div>
+    ${tags}
+    ${readingActions(reading, register)}
+    <div class="dp-reading__footer">
+      <span data-volatile>${escapeHtml(reading.usageLabel)}</span>
+      <button class="dp-star" style="margin-left:auto;" data-click="${register(reading.onToggleFav)}"
+        aria-pressed="${reading.isFav}" aria-label="${reading.isFav ? 'Remover dos favoritos' : 'Favoritar'}">${reading.isFav ? ICONS.starOn : ICONS.starOff}</button>
+    </div>`;
+}
+
+function emptyPanel(model) {
+  return `
+    <section class="dp-reading" role="region" aria-label="Leitura da mensagem" data-key="reading">
+      <div class="dp-empty">
+        <div class="dp-empty__title">${escapeHtml(model.emptyTitle)}</div>
+        <div>${escapeHtml(model.emptyHint)}</div>
+      </div>
+    </section>`;
+}
+
+export function renderLibraryView(model, register) {
+  const summary = `
+    <div class="dp-library__summary">
+      <span data-volatile>${escapeHtml(model.resultsCountLabel)}</span>
       <select aria-label="Ordenar mensagens" data-change="${register(model.onLibrarySortChange)}">
         <option value="relevance" ${model.librarySort === 'relevance' ? 'selected' : ''}>Favoritas primeiro</option>
         <option value="used" ${model.librarySort === 'used' ? 'selected' : ''}>Mais usadas</option>
@@ -56,54 +81,76 @@ export function renderLibraryView(model, theme, register) {
       </select>
     </div>`;
 
-  const content = model.hasResults
-    ? `<div style="${model.gridStyle}">${model.cardList.map(message => messageCard(message, model, theme, register)).join('')}</div>`
-    : `<div style="text-align:center;padding:70px 20px;color:${theme.textTertiary};">
-        <div style="font-weight:800;font-size:17px;color:${theme.textSecondary};">${model.libraryIsTrulyEmpty ? 'Nenhuma mensagem cadastrada ainda' : 'Nenhuma mensagem encontrada'}</div>
-        <div style="font-size:14px;margin-top:5px;">${model.libraryIsTrulyEmpty ? 'A biblioteca deste acesso ainda está vazia.' : 'Ajuste a busca ou o filtro de categoria.'}</div>
-      </div>`;
-
-  const loadMore = model.hasMoreMessages
-    ? `<div style="display:flex;justify-content:center;padding:20px 0 4px;"><button data-click="${register(model.onLoadMore)}" style="padding:10px 18px;">${escapeHtml(model.loadMoreLabel)}</button></div>`
+  const list = model.hasResults
+    ? `<ul class="dp-list" aria-label="Mensagens">${model.messageList.map(message => listItem(message, register)).join('')}</ul>`
     : '';
 
-  return `<main data-testid="library-ready" data-key="view-library" class="dp-view-enter" style="padding:22px 28px 60px;">${controls}${content}${loadMore}</main>`;
-}
+  const loadMore = model.hasMoreMessages
+    ? `<div style="display:flex; justify-content:center; padding-top:6px;"><button class="dp-btn-secondary" data-click="${register(model.onLoadMore)}">${escapeHtml(model.loadMoreLabel)}</button></div>`
+    : '';
 
-function overviewItem(message, theme, register) {
-  return `<button data-click="${register(message.onCopy)}" title="Clique para copiar" style="display:flex;align-items:center;gap:10px;border:1px solid ${theme.border};background:${theme.inputBg};border-radius:${theme.radiusMd};padding:11px 13px;text-align:left;">
-    <span style="flex:1;min-width:0;"><span style="display:block;font-weight:800;color:${theme.text};">${escapeHtml(message.titulo)}</span><span style="font-size:11px;color:${theme.textTertiary};">${escapeHtml(message.categoria)}</span></span>
-    <span aria-hidden="true">${message.copied ? '✓' : '⧉'}</span>
-  </button>`;
-}
+  // Abaixo de 900 px o painel de leitura vira diálogo (renderLibraryReadingDialog),
+  // então a coluna lateral só existe no computador.
+  const panel = model.showReadingPanel
+    ? (model.reading
+      ? `<section class="dp-reading" role="region" aria-label="Leitura da mensagem" data-key="reading">${readingBody(model.reading, register)}</section>`
+      : emptyPanel(model))
+    : '';
 
-export function renderLibraryOverview(model, theme, register) {
-  const emptyFavorite = `<div style="color:${theme.textTertiary};">Marque mensagens com a estrela para vê-las aqui.</div>`;
-  const emptyRecent = `<div style="color:${theme.textTertiary};">Copie uma mensagem e ela aparece aqui.</div>`;
   return `
-    <main data-key="view-visaogeral" class="dp-view-enter" style="padding:22px 28px 60px;display:flex;flex-direction:column;gap:18px;">
-      <div style="background:${theme.brandGradient};border-radius:${theme.radiusXl};padding:24px 28px;color:#fff;box-shadow:${theme.glow};">
-        <div style="font-family:${theme.fontDisplay};font-weight:800;font-size:22px;">${escapeHtml(model.heroGreeting)}</div>
-        <div style="font-size:13.5px;opacity:.85;margin-top:4px;">Copie sua mensagem em segundos.</div>
+    <main class="dp-library" data-testid="library-ready" data-key="view-library">
+      <div class="dp-library__list">
+        ${summary}
+        ${list}
+        ${model.hasResults ? '' : `<div class="dp-empty"><div class="dp-empty__title">${escapeHtml(model.emptyTitle)}</div><div>${escapeHtml(model.emptyHint)}</div></div>`}
+        ${loadMore}
       </div>
-      <section role="region" aria-label="Favoritas" style="background:${theme.cardBg};border:1px solid ${theme.border};border-radius:${theme.radiusXl};padding:22px;box-shadow:${theme.shadowMd};">
-        <h2 style="margin-top:0">Favoritas</h2>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;">${model.hasFav ? model.favList.map(message => overviewItem(message, theme, register)).join('') : emptyFavorite}</div>
-      </section>
-      <section role="region" aria-label="Recentes" style="background:${theme.cardBg};border:1px solid ${theme.border};border-radius:${theme.radiusXl};padding:22px;box-shadow:${theme.shadowMd};">
-        <h2 style="margin-top:0">Recentes</h2>
-        <div style="display:flex;flex-direction:column;gap:10px;">${model.hasRecent ? model.recentList.map(message => overviewItem(message, theme, register)).join('') : emptyRecent}</div>
-      </section>
+      ${panel}
     </main>`;
 }
 
-export function renderNoAccessView(model, theme, register) {
+export function renderLibraryReadingDialog(model, register) {
+  if (!model.readingAsDialog || !model.reading) return '';
   return `
-    <main style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:${theme.pageBg};padding:24px;">
-      <section aria-labelledby="no-access-title" style="width:100%;max-width:420px;background:${theme.cardBg};border:1px solid ${theme.border};border-radius:${theme.radiusXl};padding:40px 36px;text-align:center;box-shadow:${theme.shadowMd};">
-        <h1 id="no-access-title" style="font-size:17px;color:${theme.text};margin:0 0 10px;">Sem acesso a nenhum departamento</h1>
-        <p style="font-size:14px;color:${theme.textSecondary};line-height:1.5;margin:0 0 24px;">Olá, ${escapeHtml(model.noAcessoNome)}. Sua conta ainda não está vinculada a nenhum Acesso. Fale com um administrador para liberar seu acesso.</p>
-        <button data-click="${register(model.logout)}" style="padding:12px 20px;border:0;border-radius:${theme.radiusSm};background:${theme.brandGradient};color:#fff;font-weight:700;">Sair</button>
-      </section>
+    <div class="dp-backdrop" role="presentation">
+      <div class="dp-dialog dp-dialog--reading" role="dialog" aria-modal="true" aria-label="${escapeHtml(model.reading.titulo)}">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span class="dp-kicker">Leitura da mensagem</span>
+          <button class="dp-btn-icon" style="margin-left:auto;" data-click="${register(model.onCloseReading)}" aria-label="Fechar">${ICONS.close}</button>
+        </div>
+        ${readingBody(model.reading, register, { asDialog: true })}
+      </div>
+    </div>`;
+}
+
+function overviewRow(message, register) {
+  return `
+    <button class="dp-row ${message.isFav ? 'dp-row--marked' : ''}" data-click="${register(message.onCopy)}" data-key="row-${escapeHtml(message.id)}">
+      <span style="min-width:0;">
+        <span class="dp-row__title">${escapeHtml(message.titulo)}</span>
+        <span class="dp-row__meta" data-volatile>${escapeHtml(message.metaLabel)}</span>
+      </span>
+      <span class="dp-row__action">${message.copied ? 'COPIADA' : 'COPIAR'}</span>
+    </button>`;
+}
+
+export function renderLibraryOverview(model, register) {
+  const section = (label, hint, items, emptyText) => `
+    <section role="region" aria-label="${escapeHtml(label)}">
+      <div class="dp-overview__heading">
+        <h2>${escapeHtml(label)}</h2>
+        ${hint ? `<span class="dp-overview__hint">${escapeHtml(hint)}</span>` : ''}
+      </div>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        ${items.length ? items.map(item => overviewRow(item, register)).join('') : `<div class="dp-empty">${escapeHtml(emptyText)}</div>`}
+      </div>
+    </section>`;
+
+  return `
+    <main class="dp-overview" data-testid="overview-ready" data-key="view-visaogeral">
+      <div class="dp-overview__columns">
+        ${section('Favoritas', 'clique para copiar', model.favList, 'Marque mensagens com a estrela para vê-las aqui.')}
+        ${section('Copiadas recentemente', '', model.recentList, 'Copie uma mensagem e ela aparece aqui.')}
+      </div>
     </main>`;
 }

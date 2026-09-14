@@ -54,6 +54,38 @@ export async function loginAs(page, account = LOCAL_ACCOUNTS.collaborator) {
   await page.getByRole('button', { name: 'Entrar' }).click();
 }
 
+// O aviso de novidades (dp_novidades) aparece uma vez por navegador em cada etapa publicada.
+export async function dismissReleaseNotice(page) {
+  const notice = page.getByRole('dialog', { name: 'Novidades' });
+  if (await notice.isVisible().catch(() => false)) {
+    await notice.getByRole('button', { name: 'Entendi' }).click();
+    await notice.waitFor({ state: 'hidden' });
+  }
+}
+
+export async function dismissPendingNotice(page) {
+  const popup = page.getByRole('alertdialog', { name: 'Solicitações pendentes' });
+  if (await popup.isVisible().catch(() => false)) {
+    await popup.getByRole('button', { name: 'Dispensar' }).click();
+    await popup.waitFor({ state: 'hidden' });
+  }
+}
+
+// Entra e deixa a Biblioteca pronta para interação: sem avisos por cima.
+export async function openLibrary(page, account = LOCAL_ACCOUNTS.collaborator) {
+  await loginAs(page, account);
+  await page.getByTestId('library-ready').waitFor({ state: 'visible', timeout: 15_000 });
+  await dismissPendingNotice(page);
+  await dismissReleaseNotice(page);
+}
+
+// "Sair" mora no menu da conta, aberto pelo botão de iniciais da faixa da marca.
+export async function logout(page) {
+  await page.getByRole('button', { name: /^Conta de / }).click();
+  await page.getByRole('menuitem', { name: 'Sair' }).click();
+  await page.locator('[data-focus="loginEmail"]').waitFor({ state: 'visible', timeout: 15_000 });
+}
+
 export async function clearBrowserSession(page) {
   await page.context().clearCookies();
   await page.goto('/');

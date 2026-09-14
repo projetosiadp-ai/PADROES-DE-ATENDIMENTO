@@ -53,6 +53,12 @@ test('app.js não mantém renderizadores administrativos inalcançáveis nem flu
   assert.doesNotMatch(appSource, /\bExclu(ir|são|ída)\b/i);
 });
 
+test('o tema escuro e a barra lateral não deixam resquícios no orquestrador', () => {
+  assert.doesNotMatch(appSource, /darkMode|sidebarCollapsed|viewSidebar|toggleDarkMode|Alternar tema/);
+  // A preferência antiga é apagada do navegador de quem já tinha o tema escuro (FR-012).
+  assert.match(appSource, /localStorage\.removeItem\('dp_darkmode'\)/);
+});
+
 test('regras de papel e de acesso vêm de domain/permissions.mjs', () => {
   assert.doesNotMatch(appSource, /===\s*'superadmin'/);
   assert.match(appSource, /canUseAccess\(/);
@@ -68,7 +74,7 @@ test('views não oferecem "Excluir" no fluxo normal', async () => {
 test('conteúdo da biblioteca não é persistido em Web Storage', () => {
   assert.doesNotMatch(appSource, /sessionStorage\.setItem/);
   const localKeys = [...appSource.matchAll(/localStorage\.setItem\('([^']+)'/g)].map(match => match[1]);
-  assert.deepStrictEqual([...new Set(localKeys)].sort(), ['dp_active_acesso', 'dp_darkmode', 'dp_sidebar_collapsed']);
+  assert.deepStrictEqual([...new Set(localKeys)].sort(), ['dp_active_acesso', 'dp_novidades']);
   const apiSessionWrites = [...apiSource.matchAll(/sessionStorage\.setItem\((\w+)/g)].map(match => match[1]);
   assert.deepStrictEqual([...new Set(apiSessionWrites)], ['SESSION_EXPIRED_KEY']);
 });

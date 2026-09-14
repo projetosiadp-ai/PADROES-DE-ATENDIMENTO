@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-import { loginAs } from '../fixtures/auth.mjs';
+import { openLibrary } from '../fixtures/auth.mjs';
 import { SCALE_ACCOUNT } from '../fixtures/scale.mjs';
 
 const RUNS = 5;
@@ -15,9 +15,9 @@ test('@perf biblioteca atende aos limites de carga, busca e cópia em cinco medi
   test.skip(testInfo.project.name !== 'desktop-light', 'Medição canônica executada uma vez em Chromium desktop.');
 
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await loginAs(page, SCALE_ACCOUNT);
-  await expect(page.getByTestId('library-ready')).toBeVisible({ timeout: 15_000 });
-  const scaleCard = page.locator('[data-testid="message-card-80000000-0000-4000-8000-000000000001"]');
+  await openLibrary(page, SCALE_ACCOUNT);
+  const scaleItem = page.getByTestId('message-item-80000000-0000-4000-8000-000000000001');
+  const reading = page.getByRole('region', { name: 'Leitura da mensagem' });
   await expect(page.getByText('100 mensagens encontradas')).toBeVisible({ timeout: 20_000 });
 
   const client = await context.newCDPSession(page);
@@ -59,7 +59,7 @@ test('@perf biblioteca atende aos limites de carga, busca e cópia em cinco medi
     // Each run copies this card and raises its usage count, so it can already be on the initial
     // screen; wait for the app's own signal that the filtered results were rendered.
     await page.waitForFunction(() => performance.getEntriesByName('dp-search-ready').length > 0);
-    await expect(scaleCard).toBeVisible();
+    await expect(scaleItem).toBeVisible();
     searchMeasurements.push(Math.round(await page.evaluate(() =>
       performance.getEntriesByName('dp-search-ready')[0].startTime
       - performance.getEntriesByName('dp-search-start')[0].startTime
@@ -71,7 +71,9 @@ test('@perf biblioteca atende aos limites de carga, busca e cópia em cinco medi
       performance.clearMarks('dp-copy-ready');
       performance.mark('dp-copy-start');
     });
-    await scaleCard.click();
+    // Selecionar não copia mais: a medição cobre o caminho real (selecionar e copiar no painel).
+    await scaleItem.click();
+    await reading.getByRole('button', { name: 'Copiar' }).click();
     await expect(page.getByTestId('copy-status')).toHaveText('Mensagem copiada');
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('Conteúdo determinístico da mensagem de escala 0001.');
     copyMeasurements.push(Math.round(await page.evaluate(() =>

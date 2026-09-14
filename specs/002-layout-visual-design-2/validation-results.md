@@ -1,4 +1,4 @@
-# Resultados de validação — Design 2.0
+﻿# Resultados de validação — Design 2.0
 
 ## Etapa 0 (preparação) — 2026-09-14
 
@@ -53,3 +53,61 @@ equipamento: vale repetir a suíte de desempenho isolada, sem o restante rodando
 ### Ensaio de reversão (T014, SC-011)
 
 A registrar na publicação da etapa.
+
+## Etapa 1 (Biblioteca, faixa, login e Visão geral) — 2026-09-14
+
+### Desempenho (T034)
+
+Mesmo método da Etapa 0: três execuções de `@perf` com a massa de escala recém-semeada. A segunda execução foi
+descartada por ruído da máquina (carga de 9.728 ms numa amostra e cópia de 1.830 ms, com transferência idêntica às
+demais); a comparação usa as 10 amostras das execuções 1 e 3.
+
+| Medida | Etapa 0 (mediana) | Etapa 1 (mediana) | Variação | Limite | Situação |
+|---|---|---|---|---|---|
+| Carga da Biblioteca em 3G | ~1.455 ms | ~1.575 ms | +8% (+10% sobre a versão anterior à Etapa 0) | p75 ≤ 2.000 ms | dentro (p75 1.762 e 1.681 ms) |
+| Busca | ~249 ms | ~173 ms | −31% | p95 ≤ 500 ms | dentro |
+| Confirmação de cópia | ~189 ms | ~205 ms | +8% | p95 ≤ 1.000 ms | dentro |
+| Transferência por recarga | 5.700 B | ~41.450 B | +35,8 KB | 512 KB | dentro |
+| Lighthouse: scripts | 113.071 B | 116.130 B | +3 KB | 256 KB | dentro |
+| Lighthouse: total | 165.718 B | 253.875 B | +88 KB | 512 KB | dentro |
+
+Leitura dos números:
+
+- A carga ficou no limite da regra de "até 10% de piora" (T034) em relação à versão anterior à Etapa 0 e abaixo dela
+  em relação à Etapa 0. A Etapa 1 passa a usar de fato as fontes, o selo e o logo novos na primeira pintura.
+- A cópia não é comparável um a um: a medição agora inclui o clique de seleção (uma renderização a mais) antes do botão
+  Copiar, porque selecionar deixou de copiar (FR-007).
+- A busca ficou mais rápida porque a lista renderiza um item compacto por mensagem, no lugar do cartão com o texto
+  inteiro.
+- O acréscimo do Lighthouse no shell público são as imagens da tela de login (selo de 192 px e logo) e as duas fontes.
+
+### Testes automatizados
+
+| Suíte | Resultado |
+|---|---|
+| `npm run test:unit` | 72 de 72 |
+| `npm run test:db` | 72 de 72 (4 arquivos pgTAP; a etapa não altera o banco) |
+| `npm run test:e2e` | 30 de 30; 8 pulados (cenários restritos a um dos dois projetos) |
+| `npm run test:a11y` | 9 de 9 — 7 na bateria e 2 na repetição isolada (ver abaixo) |
+| `npm run test:visual` | 13 de 13 fotos geradas e revisadas contra `DESIGN - 2.0/Biblioteca DentalPlus - 8 telas.dc.html` |
+| `npm run test:perf` | dentro de todos os limites (execuções 1 e 3) |
+
+Na bateria, dois cenários de acessibilidade estouraram tempo de espera, sem nenhuma violação axe: a janela "Vínculos
+de" não abriu em 5 s, e o segundo navegador (360 px) não terminou o login em 15 s. Repetidos isoladamente, passaram em
+18,7 s e 2,9 s. É a mesma instabilidade do Supabase local já registrada na Etapa 0; durante esta etapa o banco local
+chegou a reiniciar sozinho, depois de uma tentativa de `supabase db reset` falhar porque o contêiner de storage estava
+indisponível.
+
+### Decisões tomadas durante a implementação
+
+- As fotos de referência não zeram o banco: cada tela é levada a um estado determinístico (busca que devolve uma única
+  mensagem conhecida). A Visão geral usa a conta beta, que nenhuma jornada favorita ou copia, e por isso a foto mostra as
+  duas seções em estado de orientação.
+- Busca, botão "Solicitar mensagem" e pílulas ficam só na Biblioteca; a Visão geral segue a tela 02, só com saudação e
+  resumo. As listas da Visão geral ignoram o filtro de categoria.
+- No celular, a leitura em diálogo sai da tela enquanto outra janela está aberta (um único `aria-modal`) e é desfeita
+  ao trocar de seção.
+- As cores ainda usadas por Administração e janelas (etapas 2 e 3) saíram de `app.js` para `ui/legacy-theme.mjs`, que
+  espelha os tokens; `app.js`, `views/shell-view.mjs` e `views/library-view.mjs` já estão em `MIGRATED_FILES`.
+- Defeitos encontrados e corrigidos antes da entrega: a faixa da marca recortava os resultados da busca; a leitura em
+  diálogo sobrevivia à navegação e bloqueava o menu; a busca ficava espremida a 360 px.

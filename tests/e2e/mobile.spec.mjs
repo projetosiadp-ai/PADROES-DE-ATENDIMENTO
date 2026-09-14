@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-import { LOCAL_ACCOUNTS, loginAs } from '../fixtures/auth.mjs';
+import { LOCAL_ACCOUNTS, openLibrary } from '../fixtures/auth.mjs';
 
 async function expectNoPageOverflow(page, context) {
   const dimensions = await page.evaluate(() => ({
@@ -17,10 +17,9 @@ test.beforeEach(async ({}, testInfo) => {
 });
 
 test('@a11y navegação por teclado contém o foco no modal e o devolve ao acionador', async ({ page }) => {
-  await loginAs(page, LOCAL_ACCOUNTS.collaborator);
-  await expect(page.getByTestId('library-ready')).toBeVisible({ timeout: 15_000 });
+  await openLibrary(page, LOCAL_ACCOUNTS.collaborator);
 
-  const opener = page.getByRole('button', { name: 'Sugerir mensagem' });
+  const opener = page.getByRole('button', { name: 'Solicitar mensagem' });
   await opener.focus();
   await page.keyboard.press('Enter');
 
@@ -41,27 +40,33 @@ test('@a11y navegação por teclado contém o foco no modal e o devolve ao acion
   await expect(opener).toBeFocused();
 });
 
-test('@a11y tema claro/escuro persiste e não causa overflow a 360 px', async ({ page }, testInfo) => {
-  await loginAs(page, LOCAL_ACCOUNTS.collaborator);
-  await expect(page.getByTestId('library-ready')).toBeVisible({ timeout: 15_000 });
+test('@a11y biblioteca e janelas cabem em 360 px sem rolagem horizontal', async ({ page }) => {
+  await openLibrary(page, LOCAL_ACCOUNTS.collaborator);
   await expectNoPageOverflow(page, 'biblioteca');
 
-  const initialBackground = await page.locator('#app > div').evaluate(element => getComputedStyle(element).backgroundColor);
-  await page.getByRole('button', { name: 'Alternar tema' }).click();
-  const changedBackground = await page.locator('#app > div').evaluate(element => getComputedStyle(element).backgroundColor);
-  expect(changedBackground, `${testInfo.project.name}: alternância deve mudar o fundo`).not.toBe(initialBackground);
-  await expect.poll(() => page.evaluate(() => localStorage.getItem('dp_darkmode'))).not.toBeNull();
-  await expectNoPageOverflow(page, 'biblioteca após alternar tema');
+  // As pílulas de categoria rolam dentro da própria faixa, nunca na página.
+  const pills = page.getByRole('group', { name: 'Filtrar por categoria' });
+  await expect(pills).toBeVisible();
+  const overflow = await pills.evaluate(element => getComputedStyle(element).overflowX);
+  expect(overflow).toBe('auto');
 
-  await page.getByRole('button', { name: 'Sugerir mensagem' }).click();
+  await page.locator('[data-testid^="message-item-"]').first().click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expectNoPageOverflow(page, 'leitura em diálogo');
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('button', { name: 'Solicitar mensagem' }).click();
   await expectNoPageOverflow(page, 'modal de solicitação');
 });
 
+test('@a11y o tema escuro não existe mais em nenhuma tela', async ({ page }) => {
+  await openLibrary(page, LOCAL_ACCOUNTS.collaborator);
+  await expect(page.getByRole('button', { name: 'Alternar tema' })).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('dp_darkmode'))).toBeNull();
+});
+
 test('@a11y administração usa cartões responsivos sem overflow a 360 px', async ({ page }) => {
-  await loginAs(page, LOCAL_ACCOUNTS.superadmin);
-  await expect(page.getByTestId('library-ready')).toBeVisible({ timeout: 15_000 });
-  const pending = page.getByRole('alertdialog', { name: 'Solicitações pendentes' });
-  if (await pending.isVisible().catch(() => false)) await pending.getByRole('button', { name: 'Dispensar' }).click();
+  await openLibrary(page, LOCAL_ACCOUNTS.superadmin);
 
   await page.getByRole('button', { name: 'Administração' }).click();
   await page.getByRole('tab', { name: 'Contas' }).click();

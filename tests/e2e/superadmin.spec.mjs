@@ -1,31 +1,24 @@
-import { test, expect } from '@playwright/test';
+﻿import { test, expect } from '@playwright/test';
 
-import { LOCAL_ACCOUNTS, loginAs } from '../fixtures/auth.mjs';
+import { LOCAL_ACCOUNTS, logout, openLibrary } from '../fixtures/auth.mjs';
 import { TEST_DATA, TEST_IDS } from '../fixtures/data.mjs';
 
 test.describe.configure({ timeout: 60_000 });
 
 async function createPendingProposal(page, title) {
-  await loginAs(page);
-  await expect(page.getByRole('heading', { name: 'Biblioteca' })).toBeVisible({ timeout: 15_000 });
-  await page.getByRole('button', { name: 'Sugerir mensagem' }).click();
+  await openLibrary(page);
+  await page.getByRole('button', { name: 'Solicitar mensagem' }).click();
   const dialog = page.getByRole('dialog', { name: 'Solicitar nova mensagem' });
   await dialog.getByLabel('Categoria').selectOption(TEST_IDS.categoryAlpha);
   await dialog.getByLabel('Título').fill(title);
   await dialog.getByLabel('Conteúdo').fill(`Conteúdo proposto para ${title}.`);
   await dialog.getByRole('button', { name: 'Enviar para revisão' }).click();
   await expect(page.getByText('Proposta enviada para revisão')).toBeVisible();
-  await page.getByRole('button', { name: 'Sair' }).click();
-  await expect(page.locator('[data-focus="loginEmail"]')).toBeVisible({ timeout: 10_000 });
+  await logout(page);
 }
 
 async function openPendingRequests(page) {
-  await loginAs(page, LOCAL_ACCOUNTS.superadmin);
-  await expect(page.getByRole('heading', { name: 'Biblioteca' })).toBeVisible({ timeout: 15_000 });
-  const popup = page.getByRole('alertdialog', { name: 'Solicitações pendentes' });
-  if (await popup.isVisible().catch(() => false)) {
-    await popup.getByRole('button', { name: 'Dispensar' }).click();
-  }
+  await openLibrary(page, LOCAL_ACCOUNTS.superadmin);
   await page.getByLabel('Acesso ativo').selectOption(TEST_IDS.accessAlpha);
   await page.getByRole('button', { name: 'Administração' }).click();
   await page.getByRole('tab', { name: /Solicitações/ }).click();
@@ -47,8 +40,7 @@ test('superadministrador aprova e rejeita propostas com decisão persistida', as
   await dialog.getByRole('button', { name: 'Aprovar' }).click();
   await expect(page.getByText('Solicitação aprovada.')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Sair' }).click();
-  await expect(page.locator('[data-focus="loginEmail"]')).toBeVisible({ timeout: 10_000 });
+  await logout(page);
   const rejectedTitle = 'Proposta E2E para rejeição';
   await createPendingProposal(page, rejectedTitle);
   await openPendingRequests(page);
@@ -66,12 +58,7 @@ test('duas revisões concorrentes aplicam a proposta no máximo uma vez', async 
 
   const secondContext = await browser.newContext();
   const secondPage = await secondContext.newPage();
-  await loginAs(secondPage, LOCAL_ACCOUNTS.superadmin);
-  await expect(secondPage.getByRole('heading', { name: 'Biblioteca' })).toBeVisible({ timeout: 15_000 });
-  const popup = secondPage.getByRole('alertdialog', { name: 'Solicitações pendentes' });
-  if (await popup.isVisible().catch(() => false)) {
-    await popup.getByRole('button', { name: 'Dispensar' }).click();
-  }
+  await openLibrary(secondPage, LOCAL_ACCOUNTS.superadmin);
   await secondPage.getByRole('button', { name: 'Administração' }).click();
   await secondPage.getByRole('tab', { name: /Solicitações/ }).click();
 
@@ -131,8 +118,11 @@ test('arquivar pela biblioteca usa o ciclo recuperável e bloqueia confirmação
 
   await page.getByRole('button', { name: 'Biblioteca', exact: true }).click();
   await page.getByRole('searchbox', { name: 'Buscar mensagens' }).fill(title);
-  const card = page.getByRole('article', { name: title });
-  await expect(card).toBeVisible();
+  const item = page.locator('[data-testid^="message-item-"]').filter({ hasText: title });
+  await expect(item).toBeVisible();
+  await item.click();
+  const reading = page.locator('[aria-label="Leitura da mensagem"], [aria-modal="true"]').last();
+  await expect(reading).toContainText(title);
   await expect(page.getByRole('button', { name: /Excluir/ })).toHaveCount(0);
 
   let archiveCalls = 0;
@@ -141,7 +131,7 @@ test('arquivar pela biblioteca usa o ciclo recuperável e bloqueia confirmação
     await new Promise(resolve => setTimeout(resolve, 800));
     await route.continue();
   });
-  await card.getByRole('button', { name: 'Arquivar' }).click();
+  await reading.getByRole('button', { name: 'Arquivar' }).click();
   const confirmation = page.getByRole('alertdialog', { name: 'Arquivar mensagem' });
   await expect(confirmation).toContainText(title);
   await expect(confirmation).toContainText('pode ser restaurada');
@@ -157,14 +147,14 @@ test('arquivar pela biblioteca usa o ciclo recuperável e bloqueia confirmação
   await expect(page.getByText('Mensagem arquivada.')).toBeVisible();
   await expect(confirmation).toBeHidden();
   expect(archiveCalls).toBe(1);
-  await expect(card).toHaveCount(0);
+  await expect(item).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Administração' }).click();
   await page.getByRole('tab', { name: 'Arquivados' }).click();
   await page.getByRole('row', { name: new RegExp(title) }).getByRole('button', { name: 'Restaurar' }).click();
   await expect(page.getByText('Mensagem restaurada.')).toBeVisible();
   await page.getByRole('button', { name: 'Biblioteca', exact: true }).click();
-  await expect(page.getByRole('article', { name: title })).toBeVisible();
+  await expect(page.locator('[data-testid^="message-item-"]').filter({ hasText: title })).toBeVisible();
 });
 
 test('superadministrador cria acesso e categoria, arquiva e restaura a categoria', async ({ page }) => {
@@ -246,11 +236,9 @@ test('superadministrador cria conta com vários acessos, altera vínculos e rede
   await resetDialog.getByRole('button', { name: 'Concluir' }).click();
   await expect(page.getByText(resetPassword)).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Sair' }).click();
-  await expect(page.locator('[data-focus="loginEmail"]')).toBeVisible({ timeout: 15_000 });
-  await loginAs(page, { email, password: resetPassword });
-  await expect(page.getByRole('heading', { name: 'Biblioteca' })).toBeVisible({ timeout: 15_000 });
+  await logout(page);
+  await openLibrary(page, { email, password: resetPassword });
   await expect(page.getByLabel('Selecionar acesso')).toHaveCount(0);
-  await expect(page.getByText(TEST_DATA.messageAlpha.titulo)).toBeVisible();
+  await expect(page.getByText(TEST_DATA.messageAlpha.titulo).first()).toBeVisible();
   await expect(page.getByText(TEST_DATA.messageBeta.titulo)).toHaveCount(0);
 });

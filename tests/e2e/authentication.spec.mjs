@@ -1,6 +1,6 @@
-import { test, expect } from '@playwright/test';
+﻿import { test, expect } from '@playwright/test';
 
-import { clearBrowserSession, LOCAL_ACCOUNTS, loginAs } from '../fixtures/auth.mjs';
+import { clearBrowserSession, LOCAL_ACCOUNTS, loginAs, openLibrary } from '../fixtures/auth.mjs';
 import { TEST_DATA, TEST_IDS } from '../fixtures/data.mjs';
 
 test.beforeEach(async ({}, testInfo) => {
@@ -36,8 +36,7 @@ test('sessão além do limite local expira e remove conteúdo protegido', async 
 });
 
 test('AUTH_REQUIRED durante uma ação limpa o estado protegido e volta ao login com aviso', async ({ page }) => {
-  await loginAs(page, LOCAL_ACCOUNTS.collaborator);
-  await expect(page.getByTestId('library-ready')).toBeVisible({ timeout: 15_000 });
+  await openLibrary(page, LOCAL_ACCOUNTS.collaborator);
 
   await page.route('**/rest/v1/favoritos*', route => (route.request().method() === 'GET'
     ? route.continue()
@@ -46,7 +45,9 @@ test('AUTH_REQUIRED durante uma ação limpa o estado protegido e volta ao login
       contentType: 'application/json',
       body: JSON.stringify({ code: 'PGRST303', message: 'JWT expired', details: null, hint: null }),
     })));
-  await page.locator(`[data-testid="message-card-${TEST_IDS.messageAlpha}"]`).getByRole('button', { name: /favorit/i }).click();
+  await page.getByTestId(`message-item-${TEST_IDS.messageAlpha}`).click();
+  await page.locator('[aria-label="Leitura da mensagem"], [aria-modal="true"]').last()
+    .getByRole('button', { name: /favorit/i }).click();
 
   await expect(page.getByText('Sua sessão expirou. Entre novamente.')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole('button', { name: 'Entrar' })).toBeVisible();
@@ -64,12 +65,12 @@ test('conta sem vínculo recebe orientação sem revelar bibliotecas', async ({ 
 
 test('duas contas recebem apenas conteúdo do próprio acesso', async ({ page }) => {
   await loginAs(page, LOCAL_ACCOUNTS.collaborator);
-  await expect(page.getByText(TEST_DATA.messageAlpha.titulo, { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(TEST_DATA.messageAlpha.titulo, { exact: true }).first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(TEST_DATA.messageBeta.titulo, { exact: true })).toHaveCount(0);
 
   await clearBrowserSession(page);
   await loginAs(page, LOCAL_ACCOUNTS.otherCollaborator);
-  await expect(page.getByText(TEST_DATA.messageBeta.titulo, { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(TEST_DATA.messageBeta.titulo, { exact: true }).first()).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(TEST_DATA.messageAlpha.titulo, { exact: true })).toHaveCount(0);
   await expect(page.getByLabel('Acesso ativo')).toHaveValue(TEST_IDS.accessBeta);
 });

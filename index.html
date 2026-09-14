@@ -7,8 +7,9 @@
 <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
 <meta name="theme-color" content="#16336E">
 <title>Mensagens de Relacionamento — DentalPlus</title>
-<link rel="icon" href="assets/favicon.png">
+<link rel="icon" href="assets/dp2-favicon.png">
 <link rel="preload" href="vendor/supabase.js" as="script">
+<link rel="preload" href="vendor/fonts/manrope-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="modulepreload" href="app.js">
 <link rel="modulepreload" href="api.js">
 <link rel="modulepreload" href="config.js">
@@ -22,17 +23,20 @@
 <link rel="modulepreload" href="ui/dom-morph.mjs">
 <link rel="modulepreload" href="ui/focus.mjs">
 <link rel="modulepreload" href="ui/icons.mjs">
+<link rel="modulepreload" href="domain/greeting.mjs">
+<link rel="modulepreload" href="domain/release-notes.mjs">
+<link rel="modulepreload" href="ui/legacy-theme.mjs">
 <link rel="modulepreload" href="views/library-view.mjs">
+<link rel="modulepreload" href="views/shell-view.mjs">
 <link rel="modulepreload" href="views/admin-view.mjs">
 <link rel="modulepreload" href="views/modal-view.mjs">
 <link rel="stylesheet" href="styles/design-system.css">
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: 'Manrope', sans-serif; }
+  body { margin: 0; background: var(--dp-bg); }
   html, body, #app { max-width: 100%; overflow-x: clip; }
   .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
-  h1, h2, h3 { font-family: 'Sora', 'Manrope', sans-serif; }
-  ::selection { background: #0E93D855; }
+  ::selection { background: var(--dp-highlight-bg); }
   @keyframes dp-toast-in { from { transform: translateY(12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
   @keyframes dp-toast-progress { from { width: 100%; } to { width: 0%; } }
   @keyframes dp-modal-in { from { transform: translateY(16px) scale(0.98); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
@@ -44,14 +48,9 @@
   a { transition: opacity .2s ease; }
   a:hover { opacity: .75; }
   input, textarea, select { transition: border-color .2s ease, box-shadow .2s ease; }
-  input:focus, textarea:focus, select:focus {
-    outline: none !important;
-    border-color: #0E93D8 !important;
-    box-shadow: 0 0 0 3px rgba(14,147,216,0.18);
-  }
   [role="button"] { transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease; }
-  [role="button"]:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
-    outline: 2px solid #0E93D8;
+  [role="button"]:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--dp-cyan-500);
     outline-offset: 2px;
   }
   .dp-card {
@@ -109,23 +108,6 @@
   }
 
   @media (max-width: 720px) {
-    .dp-app-shell { grid-template-columns: 1fr !important; }
-    .dp-sidebar {
-      position: static !important; height: auto !important; width: 100% !important;
-      flex-direction: row !important; align-items: center; overflow-x: auto; overflow-y: hidden;
-      padding: 10px 12px !important; gap: 8px !important;
-    }
-    .dp-sidebar > div:first-child { padding: 2px 8px !important; flex-shrink: 0; }
-    .dp-sidebar > div:not(:first-child) { flex-shrink: 0; margin-bottom: 0 !important; }
-    .dp-sidebar > div[style*="font-size:10.5px"] { display: none; }
-    .dp-sidebar-collapse-btn { display: none !important; }
-    .dp-top-header { padding: 16px 12px !important; }
-    .dp-topbar-row { flex-wrap: wrap; }
-    .dp-topbar-row > h1 { flex: 1 1 140px; }
-    .dp-topbar-row > div[style*="flex:1"] { display: none; }
-    .dp-card-actions { flex-wrap: wrap; }
-    .dp-card-actions > span[style*="flex:1"] { display: none; }
-    .dp-card-actions > button[aria-label] { width: 36px !important; height: 36px !important; }
     .dp-admin-layout { padding: 14px 12px 40px !important; }
     .dp-admin-card { grid-template-columns: 1fr !important; }
     [aria-modal="true"] { max-width: calc(100vw - 24px) !important; padding:20px 16px !important; }

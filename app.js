@@ -1,15 +1,19 @@
-// app.js
+﻿// app.js
 import * as api from './api.js';
 import { normalize, matchesSearch, titleSegments as titleSegmentsPure, pickActiveAcesso } from './search-utils.mjs';
 import { normalizeTags, paginateLibraryMessages, selectLibraryMessages } from './domain/library.mjs';
 import { canPublishContent, canUseAccess, canViewAdministration } from './domain/permissions.mjs';
 import { getOrCreateIdempotencyKey, isArchiveRequest, requestTypeLabel } from './domain/requests.mjs';
 import { resolveErrorPolicy } from './domain/error-policy.mjs';
+import { greetingFor } from './domain/greeting.mjs';
+import { CURRENT_RELEASE, RELEASE_NOTES } from './domain/release-notes.mjs';
 import { copyExactText } from './ui/clipboard.mjs';
 import { morphChildren } from './ui/dom-morph.mjs';
 import { activateDialogFocus } from './ui/focus.mjs';
 import { ICONS } from './ui/icons.mjs';
-import { renderLibraryOverview, renderLibraryView, renderNoAccessView } from './views/library-view.mjs';
+import { DEFAULT_ACCESS_COLOR, LEGACY_THEME } from './ui/legacy-theme.mjs';
+import { renderLibraryOverview, renderLibraryReadingDialog, renderLibraryView } from './views/library-view.mjs';
+import { renderBrandBand, renderCategoryPills, renderLoginView, renderNoAccessView, renderReleaseNotesDialog } from './views/shell-view.mjs';
 import { renderAdminConfirmationModal, renderMessageEditorModal, renderMessageRequestModal, renderRequestReviewModal, renderStructuralModals } from './views/modal-view.mjs';
 import { renderAdminView } from './views/admin-view.mjs';
 
@@ -59,8 +63,6 @@ class App {
     return {
       loading: true,
       loadError: '',
-      darkMode: false,
-      sidebarCollapsed: false,
       viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 1280,
       density: 'compact',
       currentUser: null,     // { user, profile }
@@ -71,6 +73,11 @@ class App {
       searchFocused: false,
       adminSearchQuery: '', adminSearchQueryDraft: '',
       categoryFilter: null,
+      favoritesOnly: false,
+      selectedMessageId: null,
+      userMenuOpen: false,
+      showPasswordHelp: false,
+      releaseNoticeSeen: CURRENT_RELEASE,
       copiedId: null,
       expandedCardIds: new Set(),
       saving: false,
@@ -86,7 +93,7 @@ class App {
       messageRequestModal: CLOSED_REQUEST_MODAL,
       requestSaving: false,
       showCatModal: false, editingCatId: null, catForm: { nome: '' }, categoryError: '', categoryInvalid: [],
-      showAcessoModal: false, acessoForm: { nome: '', descricao: '', cor: '#1BA7DC' }, accessError: '', accessInvalid: [],
+      showAcessoModal: false, acessoForm: { nome: '', descricao: '', cor: DEFAULT_ACCESS_COLOR }, accessError: '', accessInvalid: [],
       showAccountModal: false,
       accountForm: { name: '', email: '', temporaryPassword: '', role: 'colaborador', accessIds: new Set() },
       accountError: '', accountInvalid: [],
@@ -150,6 +157,7 @@ class App {
         this._dialogOpener = previousDialog ? this._dialogOpener : activeBeforeRender;
         this._dialogFocusCleanup = activateDialogFocus(dialog, {
           opener: this._dialogOpener,
+          initialFocus: dialog.querySelector('[data-initial-focus]'),
           escapeCloses: () => !this.isDialogBusy(dialog),
         });
       } else {
@@ -207,9 +215,11 @@ class App {
   async mount() {
     purgeLegacyLibraryCache();
     try {
-      const dm = localStorage.getItem('dp_darkmode'); if (dm) this.state.darkMode = dm === '1';
-      const sc = localStorage.getItem('dp_sidebar_collapsed'); if (sc) this.state.sidebarCollapsed = sc === '1';
+      // O tema escuro e a barra lateral saíram do produto (spec 002): a preferência antiga é apagada.
+      localStorage.removeItem('dp_darkmode');
+      localStorage.removeItem('dp_sidebar_collapsed');
       const activeAccess = localStorage.getItem('dp_active_acesso'); if (activeAccess) this.state.activeAcessoId = activeAccess;
+      this.state.releaseNoticeSeen = localStorage.getItem('dp_novidades') ?? '';
     } catch (e) {}
 
     this.render();
@@ -227,9 +237,9 @@ class App {
       if (!session) {
         this._refreshSequence++;
         this.libraryCache.clear();
-        const { darkMode, density, sidebarCollapsed } = this.state;
+        const { density, releaseNoticeSeen } = this.state;
         this.setState({
-          ...this.initialState(), darkMode, density, sidebarCollapsed, loading: false,
+          ...this.initialState(), density, releaseNoticeSeen, loading: false,
           loginError: api.consumeSessionExpiredNotice() ? 'Sua sessão expirou. Entre novamente.' : '',
         });
         return;
@@ -268,7 +278,8 @@ class App {
       } else if (e.key === 'Escape') {
         // A dialog with an operation in flight stays open until the operation settles.
         if (this.isDialogBusy()) { e.preventDefault(); return; }
-        if (st.showPreviewModal) this.setState({ showPreviewModal: false });
+        if (st.releaseNoticeSeen !== CURRENT_RELEASE && this.shouldShowReleaseNotice()) this.dismissReleaseNotice();
+        else if (st.showPreviewModal) this.setState({ showPreviewModal: false });
         else if (st.confirm.open) this.closeConfirm();
         else if (st.temporaryPassword.open) this.closeTemporaryPassword();
         else if (st.messageRequestModal.open) this.closeMessageRequest();
@@ -281,6 +292,7 @@ class App {
         else if (st.showSolicitacaoModal) this.closeReview();
         else if (st.showApprovalPopup) this.setState({ showApprovalPopup: false });
         else if (st.userMenuOpen) this.setState({ userMenuOpen: false });
+        else if (this.readingIsDialog()) this.setState({ selectedMessageId: null });
         else if (st.searchQuery || st.searchQueryDraft) { clearTimeout(this._searchDebounce); this.setState({ searchQuery: '', searchQueryDraft: '' }); }
       }
     };
@@ -524,8 +536,10 @@ class App {
   /* ---------------- search helpers (delegated to search-utils.mjs) ---------------- */
 
   matchesSearch(msg, query) { return matchesSearch(msg, query); }
+  // O destaque da busca é uma marcação do design system (dp-highlight), não um estilo embutido.
   titleSegments(titulo, query) {
-    return titleSegmentsPure(titulo, query, `background:${this.theme().cyan}33; border-radius:3px; padding:0 2px;`);
+    return titleSegmentsPure(titulo, query, 'dp-highlight')
+      .map(({ text, style }) => ({ text, highlight: style === 'dp-highlight' }));
   }
 
   /* Shared by the message cards, the "Visão geral" panels and the command
@@ -572,57 +586,19 @@ class App {
     this.setState({ paletteOpen: false });
   }
 
+  // Administração e janelas ainda montam estilo embutido (etapas 2 e 3): ui/legacy-theme.mjs.
   theme() {
-    const dark = this.state.darkMode;
-    return {
-      // Legacy aliases kept so every existing call site keeps working —
-      // only the underlying values change for the redesign.
-      navy: dark ? '#2B62D6' : '#16336E', cyan: dark ? '#4CC3FF' : '#09679F',
-      pageBg: dark ? '#0B1428' : '#EEF2F9',
-      cardBg: dark ? '#141F3D' : '#FFFFFF',
-      modalSolidBg: dark ? '#1A2748' : '#FFFFFF',
-      chipBg: dark ? '#141F3D' : '#F1F5FB',
-      chipBgHover: dark ? '#1E2C52' : '#e4ebf6',
-      logoSrc: dark ? 'assets/dentalplus-logo-dark.png' : 'assets/dentalplus-logo.png',
-      inputBg: dark ? '#141F3D' : '#F1F5FB',
-      text: dark ? '#DCE4F5' : '#111F3F',
-      textSecondary: dark ? '#A3B3D4' : '#54678C',
-      textTertiary: dark ? '#9AAACC' : '#586A8D',
-      border: dark ? '#243456' : '#DDE6F2',
-      border2: dark ? '#2C3F6B' : '#CBD9EA',
-      radiusSm: '12px',
-      radiusMd: '14px',
-      radiusLg: '18px',
-      radiusXl: '22px',
-      shadowSm: dark ? '0 1px 2px rgba(0,0,0,0.3)' : '0 1px 2px rgba(17,31,63,0.04)',
-      shadowMd: dark ? '0 1px 2px rgba(0,0,0,.3), 0 14px 36px -18px rgba(0,0,0,.6)' : '0 1px 2px rgba(17,31,63,.04), 0 12px 32px -16px rgba(17,31,63,.18)',
-      shadowLg: dark ? '0 14px 36px -18px rgba(0,0,0,0.6)' : '0 12px 32px -16px rgba(17,31,63,0.18)',
-      glassEffect: 'backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);',
-
-      // New tokens for the redesign.
-      panel: dark ? 'rgba(20,31,61,0.75)' : 'rgba(255,255,255,0.75)',
-      accent: dark ? '#4CC3FF' : '#09679F',
-      accentSoft: dark ? 'rgba(76,195,255,0.13)' : 'rgba(14,147,216,0.11)',
-      brand: dark ? '#2B62D6' : '#16336E',
-      brand2: dark ? '#3A74EA' : '#1E4290',
-      brandGradient: dark ? 'linear-gradient(135deg,#3A74EA,#39B5F5)' : 'linear-gradient(135deg,#1E4290,#0E93D8)',
-      glow: dark ? '0 8px 26px -8px rgba(57,181,245,0.22)' : '0 8px 24px -8px rgba(14,147,216,0.45)',
-      ok: dark ? '#34D399' : '#0E9F6E',
-      okSoft: dark ? 'rgba(52,211,153,0.13)' : 'rgba(16,185,129,0.13)',
-      danger: dark ? '#FF7B7B' : '#B82D2D',
-      dangerSoft: dark ? 'rgba(255,123,123,0.13)' : 'rgba(214,69,69,0.11)',
-      toastBg: dark ? '#E9EFFB' : '#111F3F',
-      toastInk: dark ? '#111F3F' : '#F2F7FD',
-      fontDisplay: "'Sora', 'Nunito', sans-serif",
-      fontBody: "'Manrope', sans-serif"
-    };
+    return LEGACY_THEME;
   }
 
+  // Duas cores da marca alternadas pela ordem da categoria no acesso (R16): sem paleta
+  // arbitrária e sempre com contraste suficiente sobre o fundo claro.
   categoryColor(nome) {
-    const palette = ['#1BA7DC', '#4F46E5', '#D97706', '#16A34A', '#DB2777', '#7C3AED'];
-    let hash = 0;
-    for (let i = 0; i < nome.length; i++) hash = (hash * 31 + nome.charCodeAt(i)) >>> 0;
-    return palette[hash % palette.length];
+    const names = [...new Set(this.state.categorias
+      .filter(category => category.acesso_id === this.state.activeAcessoId)
+      .map(category => category.nome))];
+    const index = names.indexOf(nome);
+    return index % 2 === 1 ? LEGACY_THEME.accent : LEGACY_THEME.brand;
   }
 
   avatarSquare(letter, color, size) {
@@ -669,7 +645,7 @@ class App {
     const t = this.theme();
     const id = ++this._toastSeq;
     const ms = duration || (body || action ? 6000 : 3000);
-    const toast = { id, msg, type: type || 'success', body: body || '', action: action || null, duration: ms, bg: type === 'error' ? t.danger : t.toastBg, ink: type === 'error' ? '#fff' : t.toastInk };
+    const toast = { id, msg, type: type || 'success', body: body || '', action: action || null, duration: ms, bg: type === 'error' ? t.danger : t.toastBg, ink: type === 'error' ? t.onBrand : t.toastInk };
     const MAX_VISIBLE = 4;
     this.setState(s => ({ toasts: [...s.toasts.filter(item => item.msg !== toast.msg), toast].slice(-MAX_VISIBLE) }));
     setTimeout(() => this.setState(s => ({ toasts: s.toasts.filter(x => x.id !== id) })), ms);
@@ -681,6 +657,41 @@ class App {
   /* ---------------- computed bindings ---------------- */
 
   roleLabel(role) { return canViewAdministration(role) ? 'Superadministrador' : 'Colaborador'; }
+
+  // Selecionar apenas mostra a mensagem no painel de leitura; copiar é ação explícita (FR-007).
+  selectMessage(messageId) {
+    this.setState({ selectedMessageId: messageId, userMenuOpen: false });
+  }
+
+  readingIsDialog() {
+    return this.state.viewportWidth < 900 && Boolean(this.state.selectedMessageId) && !this.anyModalOpen();
+  }
+
+  /* No celular a leitura é um diálogo. Enquanto outra janela estiver aberta ela sai da tela,
+   * para que exista sempre um único aria-modal e o foco fique preso na janela certa. */
+  anyModalOpen() {
+    const st = this.state;
+    return Boolean(st.showPreviewModal || st.confirm.open || st.temporaryPassword.open
+      || st.messageRequestModal.open || st.showMsgModal || st.showCatModal || st.showAcessoModal
+      || st.showAccountModal || st.showMembershipModal || st.accessUsersModal.open
+      || st.showSolicitacaoModal || st.showApprovalPopup || st.paletteOpen
+      || st.releaseNoticeSeen !== CURRENT_RELEASE);
+  }
+
+  /* O aviso de novidades não disputa espaço com o aviso de solicitações pendentes:
+   * aparece depois dele, e só uma vez por navegador em cada etapa publicada. */
+  shouldShowReleaseNotice() {
+    const st = this.state;
+    return Boolean(st.currentUser)
+      && !st.loading
+      && st.releaseNoticeSeen !== CURRENT_RELEASE
+      && !st.showApprovalPopup;
+  }
+
+  dismissReleaseNotice() {
+    try { localStorage.setItem('dp_novidades', CURRENT_RELEASE); } catch (e) {}
+    this.setState({ releaseNoticeSeen: CURRENT_RELEASE });
+  }
 
   renderVals() {
     const st = this.state;
@@ -696,9 +707,11 @@ class App {
         loginEmail: st.loginEmail, loginPassword: st.loginPassword, loginError: st.loginError,
         loggingIn: st.loggingIn, loginBtnLabel: st.loggingIn ? 'Entrando…' : 'Entrar',
         showLoginPassword: st.showLoginPassword,
+        showPasswordHelp: st.showPasswordHelp,
         onLoginEmailChange: (e) => this.setState({ loginEmail: e.target.value }),
         onLoginPasswordChange: (e) => this.setState({ loginPassword: e.target.value }),
         onToggleLoginPassword: () => this.setState({ showLoginPassword: !st.showLoginPassword }),
+        onTogglePasswordHelp: () => this.setState({ showPasswordHelp: !st.showPasswordHelp }),
         handleLogin: () => this.handleLogin(),
         onLoginKeyDown: (e) => { if (e.key === 'Enter') this.handleLogin(); },
         toasts: st.toasts,
@@ -734,47 +747,43 @@ class App {
         .catch(error => this.handleError(error));
     };
     const openPreview = (msg) => this.setState({ showPreviewModal: true, previewingMsgId: msg.id });
-    const toggleExpand = (id) => {
-      const next = new Set(st.expandedCardIds);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      this.setState({ expandedCardIds: next });
-    };
 
-    const maxFrequencia = Math.max(1, ...acessoMsgs.map(m => m.frequencia));
-    const buildCard = (m) => {
-      const isFav = st.favoriteIds.includes(m.id);
-      const isLong = m.conteudo.length > 130 || (m.conteudo.match(/\n/g) || []).length >= 3;
-      const isExpanded = st.expandedCardIds.has(m.id);
-      const name = categoryName(m);
+    const usageLabel = (frequencia) => `usada ${frequencia}${frequencia === 1 ? ' vez' : ' vezes'}`;
+    const buildListItem = (m) => {
+      const tagsLabel = m.tags.length ? ` · ${m.tags.map(tag => `#${tag}`).join(' ')}` : '';
       return {
-        id: m.id, categoria: name, titleText: m.titulo,
-        catColor: this.categoryColor(name),
-        catIcon: this.categoryIcon(name),
+        id: m.id,
         titleSegments: this.titleSegments(m.titulo, st.searchQuery),
-        displayContent: m.conteudo,
-        isLong, isExpanded, onToggleExpand: () => toggleExpand(m.id),
-        heatWidth: Math.round(100 * m.frequencia / maxFrequencia),
-        tagChips: m.tags.map(tag => ({ label: tag, onClick: () => this.setState({ searchQuery: tag, searchQueryDraft: tag }) })),
-        frequencia: m.frequencia,
-        isFav, favColor: isFav ? '#F5A623' : theme.textTertiary,
-        onToggleFav: () => toggleFav(m.id),
-        onCardClick: () => copyMessage(m),
-        onCardKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); copyMessage(m); } },
-        onCopy: () => copyMessage(m), copied: st.copiedId === m.id, copyLabel: st.copiedId === m.id ? 'Copiado' : 'Copiar',
-        copyBtnBg: st.copiedId === m.id ? theme.ok : theme.brand,
-        onPreview: () => openPreview(m),
-        onEdit: () => this.openEditMsg(m),
-        onArchive: () => this.requestArchiveMessage(m),
-        editLabel: canPublish ? 'Editar' : 'Sugerir edição',
-        archiveLabel: canPublish ? 'Arquivar' : 'Solicitar arquivamento',
-        borderColor: theme.border
+        metaLabel: `${categoryName(m)} · ${usageLabel(m.frequencia)}${tagsLabel}`,
+        isFav: st.favoriteIds.includes(m.id),
+        selected: m.id === effectiveSelectedId,
+        onSelect: () => this.selectMessage(m.id),
       };
     };
+    const buildReading = (m) => ({
+      id: m.id,
+      categoria: categoryName(m),
+      titulo: m.titulo,
+      conteudo: m.conteudo,
+      tagChips: m.tags.map(tag => ({ label: tag, onClick: () => this.setState({ searchQuery: tag, searchQueryDraft: tag }) })),
+      usageLabel: usageLabel(m.frequencia),
+      isFav: st.favoriteIds.includes(m.id),
+      onToggleFav: () => toggleFav(m.id),
+      copied: st.copiedId === m.id,
+      copyLabel: st.copiedId === m.id ? 'Copiado' : 'Copiar',
+      onCopy: () => copyMessage(m),
+      onPreview: () => openPreview(m),
+      onEdit: () => this.openEditMsg(m),
+      onArchive: () => this.requestArchiveMessage(m),
+      editLabel: canPublish ? 'Editar' : 'Sugerir edição',
+      archiveLabel: canPublish ? 'Arquivar' : 'Solicitar arquivamento',
+    });
 
     const sortBy = st.librarySort === 'az' ? 'alfabetica' : st.librarySort === 'used' ? 'frequencia' : 'relevancia';
     // One fuzzy scan per render, shared by the library and the search dropdown.
     const searchMatches = st.searchQuery.trim() ? acessoMsgs.filter(m => this.matchesSearch(m, st.searchQuery)) : acessoMsgs;
-    const filtered = selectLibraryMessages(searchMatches, {
+    const scopedMatches = st.favoritesOnly ? searchMatches.filter(m => st.favoriteIds.includes(m.id)) : searchMatches;
+    const filtered = selectLibraryMessages(scopedMatches, {
       categoryId: st.categoryFilter,
       sortBy,
     });
@@ -791,9 +800,20 @@ class App {
     }
     const libraryPage = paginateLibraryMessages(filtered, st.libraryVisibleLimit);
 
-    const acessoMsgsInCategory = acessoMsgs.filter(m => !st.categoryFilter || m.categoria_id === st.categoryFilter);
+    /* Seleção: no computador, a primeira mensagem visível fica selecionada quando nada foi
+     * escolhido ou a escolhida saiu do resultado (FR-006). No celular nada é selecionado por
+     * padrão, porque a leitura abre como diálogo por cima da lista. */
+    const isNarrow = st.viewportWidth < 900;
+    const chosen = libraryPage.items.find(m => m.id === st.selectedMessageId) ?? null;
+    const selectedMessage = chosen ?? (isNarrow ? null : (libraryPage.items[0] ?? null));
+    const effectiveSelectedId = selectedMessage?.id ?? null;
+
+    // A Visão geral não tem pílulas: as listas dela ignoram o filtro de categoria da Biblioteca.
+    const acessoMsgsInCategory = acessoMsgs;
     const miniRowData = (m) => ({
-      titulo: m.titulo, categoria: categoryName(m),
+      id: m.id, titulo: m.titulo,
+      metaLabel: `${categoryName(m)} · ${usageLabel(m.frequencia)}`,
+      isFav: st.favoriteIds.includes(m.id),
       onCopy: () => copyMessage(m), copied: st.copiedId === m.id,
     });
     const recentList = st.recentIds.map(id => acessoMsgsInCategory.find(m => m.id === id)).filter(Boolean).map(miniRowData);
@@ -804,17 +824,13 @@ class App {
       count: acessoMsgs.filter(m => m.categoria_id === c.id).length,
       icon: this.categoryIcon(c.nome), color: this.categoryColor(c.nome),
       active: st.categoryFilter === c.id,
-      onClick: () => this.setState({ categoryFilter: st.categoryFilter === c.id ? null : c.id, appView: 'biblioteca' })
+      onClick: () => this.setState({
+        categoryFilter: st.categoryFilter === c.id ? null : c.id,
+        appView: 'biblioteca', libraryVisibleLimit: 30, selectedMessageId: null,
+      }),
     }));
 
-    const density = st.density;
-    const cardGap = density === 'compact' ? 12 : 16;
-    const gridStyle = `column-width:${density === 'compact' ? 260 : 300}px; column-gap:${cardGap}px;`;
-    const cardPadding = density === 'compact' ? '14px' : '18px';
-
-    const hour = new Date().getHours();
-    const firstName = (profile.nome || '').split(' ')[0] || '';
-    const heroGreeting = (hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite') + (firstName ? `, ${firstName}!` : '!');
+    const heroGreeting = greetingFor(new Date(), profile.nome);
 
     const adminQ = st.adminSearchQuery.trim().toLowerCase();
     const adminMsgRows = acessoMsgs.filter(m => !adminQ || m.titulo.toLowerCase().includes(adminQ) || m.conteudo.toLowerCase().includes(adminQ))
@@ -861,6 +877,7 @@ class App {
 
     const appView = (st.appView === 'admin' && !isSuperAdmin) ? 'biblioteca' : (st.appView || 'biblioteca');
     const pageTitles = { biblioteca: 'Biblioteca de mensagens', visaogeral: 'Visão geral', admin: 'Administração' };
+    const favoritesCount = acessoMsgs.filter(m => st.favoriteIds.includes(m.id)).length;
     const adminTab = st.adminTab || 'mensagens';
     const pendingRequest = st.solicitacoesPendentes.find(item => item.id === st.viewingSolicitacaoId);
     const previewing = acessoMsgs.find(x => x.id === st.previewingMsgId);
@@ -876,6 +893,30 @@ class App {
       isAdminSolicitacoes: adminTab === 'solicitacoes',
       isAdminArchived: adminTab === 'arquivados',
       isSuperAdmin, isAdminNow: isSuperAdmin,
+      // Trocar de seção fecha o menu da conta e desfaz a seleção: no celular a leitura é um
+      // diálogo, e ele não pode sobreviver à navegação.
+      navItems: [
+        { label: 'Biblioteca', current: appView === 'biblioteca', onClick: () => this.setState({ appView: 'biblioteca', userMenuOpen: false, selectedMessageId: null }) },
+        { label: 'Visão geral', current: appView === 'visaogeral', onClick: () => this.setState({ appView: 'visaogeral', userMenuOpen: false, selectedMessageId: null }) },
+        ...(isSuperAdmin ? [{
+          label: 'Administração',
+          current: appView === 'admin',
+          badge: st.solicitacoesPendentes.length || null,
+          badgeLabel: `${st.solicitacoesPendentes.length} ${st.solicitacoesPendentes.length === 1 ? 'solicitação pendente' : 'solicitações pendentes'}`,
+          onClick: () => {
+            this.setState({ appView: 'admin', userMenuOpen: false, adminTab: 'mensagens', selectedMessageId: null });
+            void this.loadStructuralAdmin();
+          },
+        }] : []),
+      ],
+      bandTitle: appView === 'admin' ? 'Administração' : heroGreeting,
+      bandSummary: appView === 'admin'
+        ? `${st.solicitacoesPendentes.length} ${st.solicitacoesPendentes.length === 1 ? 'solicitação pendente' : 'solicitações pendentes'} · operando em ${activeAcesso.nome}`
+        : `${acessoMsgs.length} ${acessoMsgs.length === 1 ? 'padrão disponível' : 'padrões disponíveis'} · ${favoritesCount} ${favoritesCount === 1 ? 'favorita' : 'favoritas'}`,
+      // Tela 02: a Visão geral só tem saudação e resumo na faixa; busca e pílulas são da Biblioteca.
+      showLibraryTools: appView === 'biblioteca',
+      userMenuOpen: st.userMenuOpen,
+      onToggleUserMenu: () => this.setState({ userMenuOpen: !st.userMenuOpen }),
       goBiblioteca: () => this.setState({ appView: 'biblioteca', userMenuOpen: false }),
       goVisaoGeral: () => this.setState({ appView: 'visaogeral', userMenuOpen: false }),
       goAdmin: () => { this.setState({ appView: 'admin', userMenuOpen: false, adminTab: 'mensagens' }); void this.loadStructuralAdmin(); },
@@ -922,18 +963,13 @@ class App {
       })(),
       showSearchDropdown: st.searchFocused && st.searchQuery.trim().length > 0,
 
-      darkModeIcon: App.icons(theme)[st.darkMode ? 'sun' : 'moon'],
-      toggleDarkMode: () => { const val = !st.darkMode; this.setState({ darkMode: val }); try { localStorage.setItem('dp_darkmode', val ? '1' : '0'); } catch (e) {} },
-
-      sidebarCollapsed: st.sidebarCollapsed,
-      toggleSidebarCollapsed: () => { const val = !st.sidebarCollapsed; this.setState({ sidebarCollapsed: val }); try { localStorage.setItem('dp_sidebar_collapsed', val ? '1' : '0'); } catch (e) {} },
-
-      chipAllActive: !st.categoryFilter, chipAllCount: acessoMsgs.length,
-      setCategoryAll: () => this.setState({ categoryFilter: null, libraryVisibleLimit: 30 }),
+      chipAllActive: !st.categoryFilter && !st.favoritesOnly, chipAllCount: acessoMsgs.length,
+      setCategoryAll: () => this.setState({ categoryFilter: null, favoritesOnly: false, libraryVisibleLimit: 30, selectedMessageId: null, appView: 'biblioteca' }),
       categoriaChips,
-      categoryFilter: st.categoryFilter || '',
-      categoryOptions: acessoCats,
-      onCategoryFilterChange: (e) => this.setState({ categoryFilter: e.target.value || null, libraryVisibleLimit: 30 }),
+      favoritesCount, favoritesOnly: st.favoritesOnly,
+      toggleFavoritesOnly: () => this.setState({
+        favoritesOnly: !st.favoritesOnly, libraryVisibleLimit: 30, selectedMessageId: null, appView: 'biblioteca',
+      }),
 
       heroGreeting,
       recentList, hasRecent: recentList.length > 0,
@@ -941,15 +977,32 @@ class App {
 
       resultsCountLabel: filtered.length === 1 ? '1 mensagem encontrada' : `${filtered.length} mensagens encontradas`,
       hasResults: filtered.length > 0,
-      libraryIsTrulyEmpty: acessoMsgs.length === 0 && !st.searchQuery.trim() && !st.categoryFilter,
-      gridStyle, cardPadding, cardGap,
-      cardList: libraryPage.items.map(buildCard),
+      libraryIsTrulyEmpty: acessoMsgs.length === 0 && !st.searchQuery.trim() && !st.categoryFilter && !st.favoritesOnly,
+      emptyTitle: acessoMsgs.length === 0 && !st.searchQuery.trim() && !st.categoryFilter && !st.favoritesOnly
+        ? 'Nenhuma mensagem cadastrada ainda'
+        : 'Nenhuma mensagem encontrada',
+      emptyHint: acessoMsgs.length === 0 && !st.searchQuery.trim() && !st.categoryFilter && !st.favoritesOnly
+        ? 'A biblioteca deste acesso ainda está vazia.'
+        : 'Ajuste a busca ou escolha outra categoria.',
+      messageList: libraryPage.items.map(buildListItem),
+      reading: selectedMessage ? buildReading(selectedMessage) : null,
+      showReadingPanel: !isNarrow,
+      readingAsDialog: isNarrow && Boolean(chosen) && !this.anyModalOpen(),
+      onCloseReading: () => this.setState({ selectedMessageId: null }),
       hasMoreMessages: libraryPage.hasMore,
       loadMoreLabel: `Carregar mais (${libraryPage.total - libraryPage.items.length} restantes)`,
       onLoadMore: () => this.setState({ libraryVisibleLimit: libraryPage.nextLimit }),
 
       librarySort: st.librarySort,
-      onLibrarySortChange: (e) => this.setState({ librarySort: e.target.value, libraryVisibleLimit: 30 }),
+      onLibrarySortChange: (e) => this.setState({ librarySort: e.target.value, libraryVisibleLimit: 30, selectedMessageId: null }),
+
+      releaseNotes: {
+        open: this.shouldShowReleaseNotice(),
+        title: RELEASE_NOTES.title,
+        items: RELEASE_NOTES.items,
+        confirmLabel: RELEASE_NOTES.confirmLabel,
+        onConfirm: () => this.dismissReleaseNotice(),
+      },
 
       showPreviewModal: st.showPreviewModal,
       closePreview: () => this.setState({ showPreviewModal: false }),
@@ -982,7 +1035,7 @@ class App {
       openCreateCat: () => this.openCreateCat(),
       openCreateAcesso: () => this.openCreateAccess(),
       openCreateAccount: () => this.openCreateAccount(),
-      createMessageLabel: canPublish ? 'Nova mensagem' : 'Sugerir mensagem',
+      createMessageLabel: canPublish ? 'Nova mensagem' : 'Solicitar mensagem',
 
       messageEditor: {
         open: st.showMsgModal,
@@ -1513,7 +1566,7 @@ class App {
   /* accesses and memberships */
 
   openCreateAccess() {
-    this.setState({ showAcessoModal: true, acessoForm: { nome: '', descricao: '', cor: '#1BA7DC' }, accessError: '', accessInvalid: [] });
+    this.setState({ showAcessoModal: true, acessoForm: { nome: '', descricao: '', cor: DEFAULT_ACCESS_COLOR }, accessError: '', accessInvalid: [] });
   }
   updateAccessForm(patch) {
     this.setState(s => ({ acessoForm: { ...s.acessoForm, ...patch }, accessError: '', accessInvalid: [] }));
@@ -1775,174 +1828,38 @@ class App {
       </div>`;
     }
     if (v.isNoAcesso) {
-      return renderNoAccessView(v, v.theme, (fn) => this.h(fn))
-        + this.viewModals(v, v.theme, (fn) => this.h(fn));
+      return `<div class="dp-app">${renderNoAccessView(v, (fn) => this.h(fn))
+        + this.viewModals(v, v.theme, (fn) => this.h(fn))}</div>`;
     }
     const t = v.theme;
     const H = (fn) => this.h(fn);
     let body = '';
 
     if (v.isLogin) {
-      body += `
-      <div style="min-height:100vh; display:flex; align-items:center; justify-content:center; background:${t.pageBg}; padding:24px; position:relative; overflow:hidden;">
-        <div style="position:absolute; width:520px; height:520px; border-radius:50%; background:${t.accentSoft}; filter:blur(80px); top:-160px; right:-120px;"></div>
-        <div style="position:absolute; width:420px; height:420px; border-radius:50%; background:${t.accentSoft}; filter:blur(90px); bottom:-140px; left:-100px;"></div>
-        <div style="position:relative; width:100%; max-width:420px; background:${t.panel}; ${t.glassEffect} border:1px solid ${t.border}; border-radius:${t.radiusXl}; padding:40px 36px; box-shadow:${t.shadowMd};">
-          <div style="display:flex; justify-content:center; margin-bottom:24px;">
-            <img src="${t.logoSrc}" alt="DentalPlus" width="309" height="52" style="height:48px; width:auto;" />
-          </div>
-          <div style="text-align:center; margin-bottom:28px;">
-            <div style="font-size:19px; font-weight:800; color:${t.text}; font-family:${t.fontDisplay};">Padrões de atendimento</div>
-            <div style="font-size:14px; color:${t.textSecondary}; margin-top:4px;">Acesse com sua conta para continuar</div>
-          </div>
-          ${v.loginError ? `<div role="alert" aria-live="assertive" style="background:${t.dangerSoft}; color:${t.danger}; font-size:13px; font-weight:600; padding:10px 14px; border-radius:${t.radiusSm}; margin-bottom:16px;">${esc(v.loginError)}</div>` : ''}
-          <div style="display:flex; flex-direction:column; gap:14px;">
-            <div>
-              <label for="login-email" style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">E-mail</label>
-              <input id="login-email" name="email" type="email" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" ${v.loggingIn ? 'disabled' : ''} data-focus="loginEmail" placeholder="seuemail@empresa.com" value="${esc(v.loginEmail)}" data-input="${H(v.onLoginEmailChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 14px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
-            </div>
-            <div>
-              <label for="login-password" style="font-size:13px; font-weight:700; color:${t.textSecondary}; display:block; margin-bottom:6px;">Senha</label>
-              <div style="position:relative;">
-                <input id="login-password" name="password" autocomplete="current-password" type="${v.showLoginPassword ? 'text' : 'password'}" ${v.loggingIn ? 'disabled' : ''} data-focus="loginPassword" placeholder="••••••••" value="${esc(v.loginPassword)}" data-input="${H(v.onLoginPasswordChange)}" data-keydown="${H(v.onLoginKeyDown)}" style="width:100%; padding:12px 44px 12px 14px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:14px; font-family:inherit;" />
-                <button type="button" data-click="${H(v.onToggleLoginPassword)}" tabindex="-1" aria-label="${v.showLoginPassword ? 'Ocultar senha' : 'Mostrar senha'}" title="${v.showLoginPassword ? 'Ocultar senha' : 'Mostrar senha'}" style="position:absolute; right:6px; top:50%; transform:translateY(-50%); border:none; background:transparent; color:${t.textSecondary}; cursor:pointer; padding:6px; display:flex; align-items:center; justify-content:center; border-radius:6px;">${v.showLoginPassword ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.6 18.6 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a18.6 18.6 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>` : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/><circle cx="12" cy="12" r="3"/></svg>`}</button>
-              </div>
-            </div>
-            <button data-click="${H(v.handleLogin)}" ${v.loggingIn ? 'disabled' : ''} style="margin-top:8px; padding:13px; border-radius:${t.radiusSm}; border:none; background:${t.brandGradient}; color:#fff; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit; box-shadow:${t.glow}; opacity:${v.loggingIn ? '0.75' : '1'};">${esc(v.loginBtnLabel)}</button>
-          </div>
-        </div>
-      </div>`;
+      body += renderLoginView(v, H);
     }
 
     if (v.isApp) {
-      const sidebarW = v.sidebarCollapsed ? '72px' : '262px';
-      body += `<div style="display:grid; grid-template-columns:${sidebarW} 1fr; min-height:100vh; align-items:start; transition:grid-template-columns .15s cubic-bezier(0.4,0,0.2,1);" class="dp-app-shell">`
-        + this.viewSidebar(v, t, H)
-        + `<div style="min-width:0;">` + this.viewTopHeader(v, t, H);
-      if (v.isLib) body += this.viewLibrary(v, t, H);
-      if (v.isOver) body += this.viewVisaoGeral(v, t, H);
+      body += renderBrandBand(v, H);
+      if (v.isLib) body += renderCategoryPills(v, H);
+      if (v.isLib) body += this.viewLibrary(v, H);
+      if (v.isOver) body += this.viewVisaoGeral(v, H);
       if (v.isAdminView) body += this.viewAdmin(v, t, H);
-      body += `</div></div>`;
+      body += renderLibraryReadingDialog(v, H);
     }
 
     body += this.viewModals(v, t, H);
+    body += renderReleaseNotesDialog(v.releaseNotes, H);
 
-    return `<div style="min-height:100vh; background:${t.pageBg}; color:${t.text}; font-family:${t.fontBody}; transition:background .2s,color .2s;">${body}</div>`;
+    return `<div class="dp-app">${body}</div>`;
   }
 
-  viewSidebar(v, t, H) {
-    const c = v.sidebarCollapsed;
-    const tip = (label) => c ? `<span class="dp-tooltip">${esc(label)}</span>` : '';
-    const navIcon = (path) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">${path}</svg>`;
-    const navItem = (icon, label, active, onClick, badge) => `
-      <div role="button" tabindex="0" data-click="${H(onClick)}" aria-label="${esc(label)}" class="${c ? 'dp-tooltip-target' : ''}" style="position:relative; display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:${c ? '10px' : '10px 12px'}; justify-content:${c ? 'center' : 'flex-start'}; font-size:13.5px; font-weight:800; cursor:pointer; transition:background .15s cubic-bezier(0.4,0,0.2,1); background:${active ? t.accentSoft : 'transparent'}; color:${active ? t.accent : t.textSecondary}; margin-bottom:2px;">
-        ${c ? '' : `<span style="width:3px; height:16px; border-radius:3px; background:${active ? t.accent : 'transparent'}; flex-shrink:0;"></span>`}${icon}${c ? '' : esc(label)}
-        ${badge ? `<span style="${c ? 'position:absolute; top:2px; right:2px;' : 'margin-left:auto;'} background:${t.danger}; color:#fff; font-size:10px; font-weight:800; border-radius:999px; padding:2px 8px;">${badge}</span>` : ''}
-        ${tip(label)}
-      </div>`;
-    const catRow = (dot, label, count, active, onClick) => `
-      <div role="button" tabindex="0" data-click="${H(onClick)}" aria-label="${esc(label)}" class="${c ? 'dp-tooltip-target' : ''}" style="position:relative; display:flex; align-items:center; gap:10px; width:100%; border-radius:${t.radiusSm}; padding:${c ? '8px' : '8px 12px'}; justify-content:${c ? 'center' : 'flex-start'}; font-size:13px; font-weight:700; cursor:pointer; background:${active ? t.inputBg : 'transparent'}; color:${active ? t.text : t.textSecondary}; box-shadow:${active ? `inset 0 0 0 1px ${t.border2}` : 'none'}; margin-bottom:2px;">
-        <span style="width:8px; height:8px; border-radius:50%; background:${dot}; flex-shrink:0;"></span>${c ? '' : `${esc(label)}<span style="margin-left:auto; font-size:11px; font-weight:700; color:${t.textTertiary};">${count}</span>`}
-        ${tip(label)}
-      </div>`;
-
-    return `
-    <aside class="dp-sidebar" style="position:sticky; top:0; height:100vh; width:${c ? '72px' : '262px'}; display:flex; flex-direction:column; gap:2px; background:${t.cardBg}; border-right:1px solid ${t.border}; padding:20px 14px 16px; overflow:auto; transition:width .15s cubic-bezier(0.4,0,0.2,1), padding .15s cubic-bezier(0.4,0,0.2,1);">
-      <div role="button" tabindex="0" data-click="${H(v.goBiblioteca)}" aria-label="DentalPlus" class="${c ? 'dp-tooltip-target' : ''}" style="position:relative; display:flex; flex-direction:column; align-items:center; gap:2px; padding:2px 8px 18px; cursor:pointer; text-align:center;">
-        ${c
-          ? `<img src="assets/favicon.png" alt="DentalPlus" width="32" height="32" style="height:32px; width:32px; border-radius:9px;" />`
-          : `<img src="${t.logoSrc}" alt="DentalPlus" width="160" height="26" style="height:24px; width:auto;" /><span style="font-size:11px; color:${t.textTertiary}; font-weight:700;">Padrões de atendimento</span>`}
-        ${tip('DentalPlus')}
-      </div>
-      ${navItem(navIcon('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'), 'Biblioteca', v.isLib, v.goBiblioteca)}
-      ${navItem(navIcon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>'), 'Visão geral', v.isOver, v.goVisaoGeral)}
-      ${v.isAdminNow ? navItem(navIcon('<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>'), 'Administração', v.isAdminView, v.goAdmin, v.isSuperAdmin && v.solicitacoesCount > 0 ? v.solicitacoesCount : null) : ''}
-      ${c ? '' : `<div style="font-size:10.5px; font-weight:800; letter-spacing:1.4px; color:${t.textTertiary}; padding:18px 10px 8px;">CATEGORIAS</div>`}
-      ${catRow(t.textTertiary, 'Todas', v.chipAllCount, v.chipAllActive, v.setCategoryAll)}
-      ${v.categoriaChips.map(chip => catRow(chip.color, chip.nome, chip.count, chip.active, chip.onClick)).join('')}
-      <div style="flex:1;"></div>
-      <div style="border-top:1px solid ${t.border}; padding-top:14px; display:flex; flex-direction:column; gap:10px;">
-        <button class="dp-sidebar-collapse-btn${c ? ' dp-tooltip-target' : ''}" data-click="${H(v.toggleSidebarCollapsed)}" aria-label="${c ? 'Expandir menu' : 'Recolher menu'}" style="position:relative; display:flex; align-items:center; gap:10px; justify-content:${c ? 'center' : 'flex-start'}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer;">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0; transform:rotate(${c ? '180deg' : '0deg'}); transition:transform .15s cubic-bezier(0.4,0,0.2,1);"><path d="M15 18l-6-6 6-6"/></svg>${c ? '' : 'Recolher menu'}
-          ${tip('Expandir menu')}
-        </button>
-        <button class="${c ? 'dp-tooltip-target' : ''}" data-click="${H(v.toggleDarkMode)}" aria-label="Alternar tema" style="position:relative; display:flex; align-items:center; gap:10px; justify-content:${c ? 'center' : 'flex-start'}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:13px; font-weight:700; cursor:pointer;">${v.darkModeIcon}${c ? '' : ' Alternar tema'}${tip('Alternar tema')}</button>
-        <div style="display:flex; align-items:center; gap:10px; padding:${c ? '10px 4px 0' : '12px 4px 0'}; margin-top:2px; border-top:1px solid ${t.border}; flex-direction:${c ? 'column' : 'row'}; justify-content:${c ? 'center' : 'flex-start'};">
-          <div aria-label="${c ? esc(v.currentUser.nome) : ''}" class="${c ? 'dp-tooltip-target' : ''}" style="position:relative; width:32px; height:32px; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; flex-shrink:0;">${esc(v.currentUser.iniciais)}${tip(v.currentUser.nome)}</div>
-          ${c ? '' : `
-          <div style="flex:1; min-width:0; line-height:1.15;">
-            <div style="font-size:13px; font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(v.currentUser.nome)}</div>
-            <div style="font-size:11px; color:${t.textTertiary};">${esc(v.currentUser.perfilLabel)}</div>
-          </div>`}
-          <button data-click="${H(v.logout)}" title="Sair" style="border:0; background:transparent; color:${t.textTertiary}; cursor:pointer; padding:6px; border-radius:${t.radiusSm}; display:flex;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-          </button>
-        </div>
-      </div>
-    </aside>`;
+  viewLibrary(v, H) {
+    return renderLibraryView(v, H);
   }
 
-  viewTopHeader(v, t, H) {
-    const showLibraryTools = v.isLib || v.isOver;
-    return `
-    <header class="dp-top-header" style="position:sticky; top:0; z-index:40; background:${t.panel}; ${t.glassEffect} border-bottom:1px solid ${t.border}; padding:18px 28px; display:flex; flex-direction:column; gap:16px;">
-      <div class="dp-topbar-row" style="display:flex; align-items:center; gap:14px;">
-        <h1 style="margin:0; font-size:20px; font-weight:800; letter-spacing:-0.4px; font-family:${t.fontDisplay};">${esc(v.pageTitle)}</h1>
-        ${`
-          <select aria-label="Acesso ativo" data-change="${H(v.onChangeActiveAcesso)}" style="padding:8px 12px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:13px; font-weight:700; font-family:inherit;">
-            ${v.userAcessosOptions.map(opt => `<option value="${esc(opt.id)}" ${opt.id === v.activeAcessoId ? 'selected' : ''}>${esc(opt.nome)}</option>`).join('')}
-          </select>`}
-        <div style="flex:1;"></div>
-        ${showLibraryTools ? `
-          <button data-click="${H(v.openPalette)}" title="Busca rápida" style="border:1px solid ${t.border}; background:${t.cardBg}; color:${t.textSecondary}; border-radius:${t.radiusSm}; padding:9px 12px; font-size:11px; font-weight:700; cursor:pointer; flex-shrink:0;">${esc(v.shortcutLabel)}</button>
-          <button data-click="${H(v.openCreateMsg)}" style="display:flex; align-items:center; gap:7px; border:0; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; font-weight:800; font-size:13.5px; padding:11px 18px; cursor:pointer; box-shadow:${t.glow}; flex-shrink:0;">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>${esc(v.createMessageLabel)}
-          </button>` : ''}
-      </div>
-      ${showLibraryTools ? `
-        <div style="position:relative; width:100%;">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${t.textTertiary}" stroke-width="2.2" stroke-linecap="round" style="position:absolute; left:15px; top:50%; transform:translateY(-50%);"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-          <input aria-label="Buscar mensagens" data-ref="${H(v.searchInputRef)}" data-focus="search" type="search" placeholder="Buscar mensagem, tag, categoria…  ( / )" value="${esc(v.searchQueryDraft)}" data-input="${H(v.onSearchChange)}" data-focusin="${H(v.onSearchFocus)}" data-focusout="${H(v.onSearchBlur)}" autocomplete="off" style="width:100%; padding:14px 18px 14px 46px; border-radius:${t.radiusSm}; border:1px solid ${t.border}; background:${t.inputBg}; color:${t.text}; font-size:15px; font-family:inherit;" />
-          ${v.showSearchDropdown ? `
-          <div style="position:absolute; top:calc(100% + 6px); left:0; right:0; background:${t.modalSolidBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; box-shadow:${t.shadowLg}; overflow-y:auto; overflow-x:hidden; max-height:min(300px, 45vh); z-index:50;">
-            ${v.searchDropdownResults.length ? v.searchDropdownResults.map(r => `
-              <div data-mousedown="${H(r.onPick)}" style="display:flex; align-items:center; gap:10px; padding:11px 16px; cursor:pointer; border-bottom:1px solid ${t.border};" class="dp-table-row">
-                <div style="flex:1; min-width:0;">
-                  <div style="font-size:13.5px; font-weight:800; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.titulo)}</div>
-                  <div style="font-size:12px; color:${t.textSecondary}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.snippet)}</div>
-                </div>
-                <div style="font-size:10.5px; font-weight:800; color:${t.accent}; background:${t.accentSoft}; padding:3px 9px; border-radius:999px; flex-shrink:0;">${esc(r.categoria)}</div>
-              </div>`).join('') : `
-              <div style="padding:16px; text-align:center; font-size:13px; color:${t.textTertiary};">Nenhuma mensagem encontrada</div>`}
-          </div>` : ''}
-        </div>` : ''}
-    </header>`;
-  }
-
-  static icons(t) {
-    return {
-      star: (filled, color) => filled
-        ? `<svg width="17" height="17" viewBox="0 0 24 24" fill="${color || 'currentColor'}" stroke="${color || 'currentColor'}" stroke-width="1.8" stroke-linejoin="round"><polygon points="12 2.5 14.9 9.1 22 9.8 16.6 14.5 18.3 21.5 12 17.6 5.7 21.5 7.4 14.5 2 9.8 9.1 9.1"/></svg>`
-        : `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="${color || 'currentColor'}" stroke-width="1.8" stroke-linejoin="round"><polygon points="12 2.5 14.9 9.1 22 9.8 16.6 14.5 18.3 21.5 12 17.6 5.7 21.5 7.4 14.5 2 9.8 9.1 9.1"/></svg>`,
-      clipboard: ICONS.clipboard,
-      check: ICONS.check,
-      eye: ICONS.eye,
-      edit: ICONS.edit,
-      trash: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>`,
-      fire: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3-3 4-3 8a4 4 0 0 0 8 0c1.5 1.5 2 3.5 2 5a7 7 0 1 1-14 0c0-4 3-6 4-8 1-2 1.5-3.5 3-5z"/></svg>`,
-      clock: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>`,
-      search: `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>`,
-      sun: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.5M12 19v2.5M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M2.5 12H5M19 12h2.5M4.6 19.4l1.8-1.8M17.6 6.4l1.8-1.8"/></svg>`,
-      moon: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/></svg>`
-    };
-  }
-
-  viewLibrary(v, t, H) {
-    return renderLibraryView(v, t, H);
-  }
-
-  viewVisaoGeral(v, t, H) {
-    return renderLibraryOverview(v, t, H);
+  viewVisaoGeral(v, H) {
+    return renderLibraryOverview(v, H);
   }
 
   viewAdmin(v, t, H) {
@@ -1965,7 +1882,7 @@ class App {
           <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:20px; line-height:1.5;">Há ${v.approvalPopupCount} solicitaç${v.approvalPopupCount === 1 ? 'ão' : 'ões'} de mensagem aguardando sua aprovação.</div>
           <div style="display:flex; justify-content:flex-end; gap:10px;">
             <button data-click="${H(v.dismissApprovalPopup)}" style="padding:9px 16px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Dispensar</button>
-            <button data-click="${H(v.goApprovals)}" style="padding:9px 16px; border-radius:8px; border:none; background:${t.navy}; color:#fff; font-size:13px; font-weight:700; cursor:pointer;">Ver solicitações</button>
+            <button data-click="${H(v.goApprovals)}" style="padding:9px 16px; border-radius:8px; border:none; background:${t.navy}; color:${t.onBrand}; font-size:13px; font-weight:700; cursor:pointer;">Ver solicitações</button>
           </div>
         </div>
       </div>`;
@@ -1986,7 +1903,7 @@ class App {
           <div style="background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:16px 18px; white-space:pre-wrap; font-size:14px; line-height:1.65; color:${t.text}; max-height:48vh; overflow:auto;">${esc(m.conteudo)}</div>
           <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:18px;">
             <button data-click="${H(v.closePreview)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-weight:700; font-size:13.5px; padding:10px 18px; border-radius:${t.radiusSm}; cursor:pointer;">Fechar</button>
-            <button data-click="${H(m.onCopy)}" style="display:flex; align-items:center; gap:7px; border:0; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:#fff; font-weight:800; font-size:13.5px; padding:10px 18px; cursor:pointer; box-shadow:${t.glow};">
+            <button data-click="${H(m.onCopy)}" style="display:flex; align-items:center; gap:7px; border:0; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:${t.onBrand}; font-weight:800; font-size:13.5px; padding:10px 18px; cursor:pointer; box-shadow:${t.glow};">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copiar mensagem
             </button>
           </div>
@@ -1996,50 +1913,46 @@ class App {
 
     if (v.paletteOpen) {
       out += `
-      <div role="presentation" data-click="${H(v.closePalette)}" style="position:fixed; inset:0; background:rgba(5,10,26,0.5); backdrop-filter:blur(6px); display:flex; justify-content:center; align-items:flex-start; z-index:120; padding:12vh 20px 20px;">
-        <div role="dialog" aria-modal="true" aria-label="Busca rápida" data-click="${stay}" style="width:100%; max-width:600px; background:${t.modalSolidBg}; border:1px solid ${t.border}; border-radius:${t.radiusXl}; box-shadow:${t.shadowLg}; overflow:hidden; animation:dp-modal-in .18s ease-out;">
-          <div style="display:flex; align-items:center; gap:12px; padding:16px 20px; border-bottom:1px solid ${t.border};">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="${t.textTertiary}" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
-            <input data-ref="${H(v.paletteInputRef)}" data-focus="palette" value="${esc(v.paletteQuery)}" data-input="${H(v.onPaletteQueryChange)}" placeholder="Digite para buscar e Enter para copiar…" style="flex:1; border:0; background:transparent; color:${t.text}; font-size:15px; outline:none; font-family:inherit;" />
-            <span style="border:1px solid ${t.border}; background:${t.inputBg}; border-radius:6px; padding:2px 7px; font-size:11px; font-weight:700; color:${t.textSecondary};">Esc</span>
+      <div class="dp-backdrop dp-backdrop--top" role="presentation" data-click="${H(v.closePalette)}">
+        <div class="dp-dialog dp-palette" role="dialog" aria-modal="true" aria-label="Busca rápida" data-click="${stay}">
+          <div class="dp-palette__search">
+            ${ICONS.search}
+            <input data-ref="${H(v.paletteInputRef)}" data-focus="palette" value="${esc(v.paletteQuery)}" data-input="${H(v.onPaletteQueryChange)}" aria-label="Buscar e copiar" placeholder="Digite para buscar e Enter para copiar…" />
+            <kbd class="dp-kbd">Esc</kbd>
           </div>
-          <div style="max-height:330px; overflow:auto; padding:8px;">
+          <div class="dp-palette__rows">
             ${v.paletteRows.map(r => `
-              <div role="button" tabindex="0" data-click="${H(r.onPick)}" style="display:flex; align-items:center; gap:12px; padding:11px 14px; border-radius:${t.radiusSm}; cursor:pointer; background:${r.active ? t.accentSoft : 'transparent'};">
-                <span style="width:10px; height:10px; border-radius:50%; background:${r.catColor}; flex-shrink:0;"></span>
-                <span style="flex:1; min-width:0;"><span style="display:block; font-weight:800; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.titulo)}</span><span style="display:block; font-size:12px; color:${t.textTertiary};">${esc(r.categoria)}</span></span>
-                <span style="font-size:11px; font-weight:700; color:${t.accent}; opacity:${r.active ? 1 : 0};">↵ copiar</span>
+              <div class="dp-palette__row" role="button" tabindex="0" data-click="${H(r.onPick)}"${r.active ? ' aria-current="true"' : ''}>
+                <span style="flex:1; min-width:0;">
+                  <span class="dp-list-item__title" style="font-size:14px;">${esc(r.titulo)}</span>
+                  <span class="dp-list-item__meta">${esc(r.categoria)}</span>
+                </span>
+                <span class="dp-palette__hint">↵ copiar</span>
               </div>`).join('')}
-            ${v.paletteEmpty ? `<div style="padding:24px; text-align:center; color:${t.textTertiary}; font-size:14px;">Nada encontrado para "${esc(v.paletteQuery)}".</div>` : ''}
+            ${v.paletteEmpty ? `<div class="dp-empty">Nada encontrado para "${esc(v.paletteQuery)}".</div>` : ''}
           </div>
-          <div style="display:flex; gap:16px; padding:11px 20px; border-top:1px solid ${t.border}; font-size:11.5px; color:${t.textTertiary}; font-weight:600;">
-            <span><span style="border:1px solid ${t.border}; background:${t.inputBg}; border-radius:5px; padding:1px 6px;">↑↓</span> navegar</span>
-            <span><span style="border:1px solid ${t.border}; background:${t.inputBg}; border-radius:5px; padding:1px 6px;">↵</span> copiar</span>
-            <span><span style="border:1px solid ${t.border}; background:${t.inputBg}; border-radius:5px; padding:1px 6px;">Esc</span> fechar</span>
+          <div class="dp-palette__footer">
+            <span><kbd class="dp-kbd">↑↓</kbd> navegar</span>
+            <span><kbd class="dp-kbd">↵</kbd> copiar</span>
+            <span><kbd class="dp-kbd">Esc</kbd> fechar</span>
           </div>
         </div>
       </div>`;
     }
 
     if (v.toasts.length) {
-      const toastIcon = (ok) => ok
-        ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`
-        : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5M12 16.5h.01"/><circle cx="12" cy="12" r="9"/></svg>`;
-      const closeIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg>`;
       out += `
-      <div style="position:fixed; bottom:24px; right:24px; z-index:200; display:flex; flex-direction:column-reverse; gap:10px; max-width:min(380px,86vw);">
+      <div class="dp-toasts">
         ${v.toasts.map(toast => `
-        <div data-key="toast-${esc(toast.id)}" role="status" aria-live="polite" style="position:relative; overflow:hidden; background:${toast.bg}; color:${toast.ink || '#fff'}; border-radius:${t.radiusLg}; box-shadow:0 16px 36px -12px rgba(0,0,0,.4), 0 2px 8px -2px rgba(0,0,0,.15); animation:dp-toast-in .25s cubic-bezier(.2,.9,.3,1.3);">
-          <div style="display:flex; align-items:flex-start; gap:11px; padding:14px 14px 14px 16px;">
-            <span style="width:24px; height:24px; border-radius:50%; background:${toast.type === 'error' ? 'rgba(255,255,255,.22)' : 'rgba(16,185,129,.95)'}; color:#fff; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:1px; box-shadow:0 2px 6px -1px rgba(0,0,0,.25);">${toastIcon(toast.type !== 'error')}</span>
-            <div style="flex:1; min-width:0;">
-              <div style="font-weight:800; font-size:13.5px; font-family:${t.fontDisplay}; line-height:1.35;">${esc(toast.msg)}</div>
-              ${toast.body ? `<div style="white-space:pre-wrap; font-size:12px; line-height:1.5; font-weight:500; opacity:.8; margin-top:7px; max-height:150px; overflow:auto; background:rgba(128,140,170,.14); border-radius:9px; padding:8px 10px;">${esc(toast.body)}</div>` : ''}
-              ${toast.action ? `<button data-click="${H(() => { toast.action.onClick(); this.dismissToast(toast.id); })}" style="margin-top:9px; border:1px solid rgba(255,255,255,.4); background:transparent; color:inherit; font-size:12px; font-weight:800; padding:6px 13px; border-radius:8px; cursor:pointer;">${esc(toast.action.label)}</button>` : ''}
-            </div>
-            <button data-click="${H(() => this.dismissToast(toast.id))}" aria-label="Fechar" title="Fechar" style="flex-shrink:0; width:20px; height:20px; border-radius:50%; border:none; background:transparent; color:inherit; opacity:.55; display:flex; align-items:center; justify-content:center; cursor:pointer; margin-top:2px;">${closeIcon}</button>
+        <div class="dp-toast${toast.type === 'error' ? ' dp-toast--error' : ''}" data-key="toast-${esc(toast.id)}" role="status" aria-live="polite">
+          <span class="dp-toast__icon">${toast.type === 'error' ? ICONS.close : ICONS.check}</span>
+          <div style="flex:1; min-width:0;">
+            <div class="dp-toast__title">${esc(toast.msg)}</div>
+            ${toast.body ? `<div class="dp-toast__body">${esc(toast.body)}</div>` : ''}
+            ${toast.action ? `<button class="dp-toast__action" data-click="${H(() => { toast.action.onClick(); this.dismissToast(toast.id); })}">${esc(toast.action.label)}</button>` : ''}
           </div>
-          <span style="position:absolute; left:0; bottom:0; height:2.5px; width:100%; background:rgba(128,140,170,.3); overflow:hidden; display:block;"><span style="display:block; height:100%; background:${toast.type === 'error' ? 'rgba(255,255,255,.7)' : t.brandGradient}; animation:dp-toast-progress ${toast.duration}ms linear forwards;"></span></span>
+          <button class="dp-toast__close" data-click="${H(() => this.dismissToast(toast.id))}" aria-label="Fechar" title="Fechar">${ICONS.close}</button>
+          <span class="dp-toast__progress" style="animation-duration:${toast.duration}ms;"></span>
         </div>`).join('')}
       </div>`;
     }
