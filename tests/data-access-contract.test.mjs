@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+﻿import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
@@ -48,7 +48,7 @@ test('app.js usa somente funções exportadas pela camada de dados', () => {
 
 test('app.js não mantém renderizadores administrativos inalcançáveis nem fluxo de exclusão', () => {
   assert.doesNotMatch(appSource, /if\s*\(\s*false\b/);
-  assert.match(appSource, /viewAdmin\(v, t, H\) \{\s*return renderAdminView\(v, t, H\);\s*\}/);
+  assert.match(appSource, /viewAdmin\(v, H\) \{\s*return renderAdminView\(v, H\);\s*\}/);
   assert.doesNotMatch(appSource, /deleteMensagem|deleteCategoria|scheduleDelete|pendingDeleteIds|undoDelete/);
   assert.doesNotMatch(appSource, /\bExclu(ir|são|ída)\b/i);
 });

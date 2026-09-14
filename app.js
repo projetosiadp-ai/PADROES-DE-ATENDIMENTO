@@ -1,6 +1,6 @@
 ﻿// app.js
 import * as api from './api.js';
-import { normalize, matchesSearch, titleSegments as titleSegmentsPure, pickActiveAcesso } from './search-utils.mjs';
+import { matchesSearch, titleSegments as titleSegmentsPure, pickActiveAcesso } from './search-utils.mjs';
 import { normalizeTags, paginateLibraryMessages, selectLibraryMessages } from './domain/library.mjs';
 import { canPublishContent, canUseAccess, canViewAdministration } from './domain/permissions.mjs';
 import { getOrCreateIdempotencyKey, isArchiveRequest, requestTypeLabel } from './domain/requests.mjs';
@@ -11,10 +11,10 @@ import { copyExactText } from './ui/clipboard.mjs';
 import { morphChildren } from './ui/dom-morph.mjs';
 import { activateDialogFocus } from './ui/focus.mjs';
 import { ICONS } from './ui/icons.mjs';
-import { DEFAULT_ACCESS_COLOR, LEGACY_THEME } from './ui/legacy-theme.mjs';
+import { DEFAULT_ACCESS_COLOR } from './domain/access-defaults.mjs';
 import { renderLibraryOverview, renderLibraryReadingDialog, renderLibraryView } from './views/library-view.mjs';
 import { renderBrandBand, renderCategoryPills, renderLoginView, renderNoAccessView, renderReleaseNotesDialog } from './views/shell-view.mjs';
-import { renderAdminConfirmationModal, renderDialog, renderMessageEditorModal, renderMessageRequestModal, renderRequestReviewModal, renderStructuralModals } from './views/modal-view.mjs';
+import { renderAdminConfirmationModal, renderDialog, renderMessageEditorModal, renderMessageRequestModal, renderStructuralModals } from './views/modal-view.mjs';
 import { renderAdminView } from './views/admin-view.mjs';
 
 const esc = (s) => String(s == null ? '' : s)
@@ -108,7 +108,7 @@ class App {
       solicitacoesPendentes: [],
       showApprovalPopup: false,
       approvalPopupSeenThisSession: false,
-      showSolicitacaoModal: false, viewingSolicitacaoId: null,
+      viewingSolicitacaoId: null,
       solicitacaoRejectMode: false, rejectMotivo: '',
       reviewSaving: false, reviewError: '', reviewInvalid: [],
       archivedMessages: [], archivedCategories: [], archivedLoading: false,
@@ -289,7 +289,6 @@ class App {
         else if (st.showAccountModal) this.closeAccountModal();
         else if (st.showMembershipModal) this.closeMembershipModal();
         else if (st.accessUsersModal.open) this.closeAccessUsers();
-        else if (st.showSolicitacaoModal) this.closeReview();
         else if (st.showApprovalPopup) this.setState({ showApprovalPopup: false });
         else if (st.userMenuOpen) this.setState({ userMenuOpen: false });
         else if (this.readingIsDialog()) this.setState({ selectedMessageId: null });
@@ -586,66 +585,10 @@ class App {
     this.setState({ paletteOpen: false });
   }
 
-  // Administração e janelas ainda montam estilo embutido (etapas 2 e 3): ui/legacy-theme.mjs.
-  theme() {
-    return LEGACY_THEME;
-  }
-
-  // Duas cores da marca alternadas pela ordem da categoria no acesso (R16): sem paleta
-  // arbitrária e sempre com contraste suficiente sobre o fundo claro.
-  categoryColor(nome) {
-    const names = [...new Set(this.state.categorias
-      .filter(category => category.acesso_id === this.state.activeAcessoId)
-      .map(category => category.nome))];
-    const index = names.indexOf(nome);
-    return index % 2 === 1 ? LEGACY_THEME.accent : LEGACY_THEME.brand;
-  }
-
-  avatarSquare(letter, color, size) {
-    const s = size || 26;
-    const radius = s <= 30 ? '9px' : '11px';
-    const fontSize = s <= 30 ? '12px' : '14px';
-    return `<div style="width:${s}px; height:${s}px; border-radius:${radius}; background:linear-gradient(135deg, ${color}2E, ${color}16); color:${color}; font-weight:800; font-size:${fontSize}; display:flex; align-items:center; justify-content:center; flex-shrink:0; border:1px solid ${color}40; box-shadow:0 2px 6px -3px ${color}66;">${esc(letter)}</div>`;
-  }
-
-  // Ícone temático por palavra-chave no nome da categoria (texto livre, criado
-  // pelo usuário — sem tabela de mapeamento no banco). Sem correspondência,
-  // cai no ícone de etiqueta genérico em vez de deixar o avatar vazio.
-  categoryIcon(nome) {
-    const n = normalize(nome);
-    const has = (...words) => words.some(w => n.includes(w));
-    if (has('financeiro', 'pix', 'pagamento', 'cobranca', 'fatura', 'boleto', 'reembolso'))
-      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`;
-    if (has('comercial', 'venda', 'proposta', 'orcamento', 'pedido'))
-      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.7 13.4a2 2 0 0 0 2 1.6h9.7a2 2 0 0 0 2-1.6L23 6H6"/></svg>`;
-    if (has('relacionamento', 'atendimento', 'boas-vindas', 'boas vindas', 'cliente'))
-      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>`;
-    if (has('qualidade', 'avaliacao', 'pesquisa'))
-      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15 9 22 9.5 17 14.5 18.5 22 12 18 5.5 22 7 14.5 2 9.5 9 9 12 2"/></svg>`;
-    if (has('portal', 'sistema', 'acesso', 'login', 'senha'))
-      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="18" x2="12" y2="21"/></svg>`;
-    if (has('empresarial', 'institucional', 'corporativo'))
-      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>`;
-    if (has('agendamento', 'consulta', 'horario', 'marcacao'))
-      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
-    if (has('resolucao', 'problema', 'suporte', 'duvida'))
-      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>`;
-    if (has('protocolo', 'documento', 'contrato', 'pendencia', 'encerramento'))
-      return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>`;
-    return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 12.6 12.6 20.6a2 2 0 0 1-2.8 0l-6.4-6.4a2 2 0 0 1 0-2.8L11.4 3.4A2 2 0 0 1 12.8 3H19a2 2 0 0 1 2 2v6.2a2 2 0 0 1-.4 1.4z"/><circle cx="16" cy="8" r="1"/></svg>`;
-  }
-
-  avatarIcon(iconSvg, color, size) {
-    const s = size || 26;
-    const radius = s <= 30 ? '9px' : '11px';
-    return `<div style="width:${s}px; height:${s}px; border-radius:${radius}; background:linear-gradient(135deg, ${color}2E, ${color}16); color:${color}; display:flex; align-items:center; justify-content:center; flex-shrink:0; border:1px solid ${color}40; box-shadow:0 2px 6px -3px ${color}66;">${iconSvg}</div>`;
-  }
-
   showToast(msg, type, body, action, duration) {
-    const t = this.theme();
     const id = ++this._toastSeq;
     const ms = duration || (body || action ? 6000 : 3000);
-    const toast = { id, msg, type: type || 'success', body: body || '', action: action || null, duration: ms, bg: type === 'error' ? t.danger : t.toastBg, ink: type === 'error' ? t.onBrand : t.toastInk };
+    const toast = { id, msg, type: type || 'success', body: body || '', action: action || null, duration: ms };
     const MAX_VISIBLE = 4;
     this.setState(s => ({ toasts: [...s.toasts.filter(item => item.msg !== toast.msg), toast].slice(-MAX_VISIBLE) }));
     setTimeout(() => this.setState(s => ({ toasts: s.toasts.filter(x => x.id !== id) })), ms);
@@ -674,7 +617,7 @@ class App {
     return Boolean(st.showPreviewModal || st.confirm.open || st.temporaryPassword.open
       || st.messageRequestModal.open || st.showMsgModal || st.showCatModal || st.showAcessoModal
       || st.showAccountModal || st.showMembershipModal || st.accessUsersModal.open
-      || st.showSolicitacaoModal || st.showApprovalPopup || st.paletteOpen
+      || st.showApprovalPopup || st.paletteOpen
       || st.releaseNoticeSeen !== CURRENT_RELEASE);
   }
 
@@ -695,15 +638,13 @@ class App {
 
   renderVals() {
     const st = this.state;
-    const theme = this.theme();
     const session = st.currentUser;
 
-    if (st.loading) return { isLogin: false, isApp: false, isLoading: true, theme, toasts: st.toasts };
+    if (st.loading) return { isLogin: false, isApp: false, isLoading: true, toasts: st.toasts };
 
     if (!session) {
       return {
         isLogin: true, isApp: false, isLoading: false,
-        theme,
         loginEmail: st.loginEmail, loginPassword: st.loginPassword, loginError: st.loginError,
         loggingIn: st.loggingIn, loginBtnLabel: st.loggingIn ? 'Entrando…' : 'Entrar',
         showLoginPassword: st.showLoginPassword,
@@ -722,7 +663,7 @@ class App {
     const activeAcesso = this.activeAccess();
     if (!activeAcesso) {
       return {
-        isLogin: false, isApp: false, isNoAcesso: true, isLoading: false, theme,
+        isLogin: false, isApp: false, isNoAcesso: true, isLoading: false,
         noAcessoNome: profile.nome,
         logout: () => this.logout(),
         toasts: st.toasts,
@@ -822,7 +763,6 @@ class App {
     const categoriaChips = acessoCats.map(c => ({
       nome: c.nome,
       count: acessoMsgs.filter(m => m.categoria_id === c.id).length,
-      icon: this.categoryIcon(c.nome), color: this.categoryColor(c.nome),
       active: st.categoryFilter === c.id,
       onClick: () => this.setState({
         categoryFilter: st.categoryFilter === c.id ? null : c.id,
@@ -836,13 +776,15 @@ class App {
     const adminMsgRows = acessoMsgs.filter(m => !adminQ || m.titulo.toLowerCase().includes(adminQ) || m.conteudo.toLowerCase().includes(adminQ))
       .map(m => ({
         id: m.id, categoria: categoryName(m), titulo: m.titulo, conteudo: m.conteudo,
+        usageLabel: `${m.frequencia}×`,
         onEdit: () => this.openEditMsg(m),
         onArchive: () => this.requestArchiveMessage(m),
       }));
 
+    const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
     const catRows = acessoCats.map(c => ({
       id: c.id, nome: c.nome,
-      countLabel: acessoMsgs.filter(m => m.categoria_id === c.id).length + ' mensagens',
+      countLabel: plural(acessoMsgs.filter(m => m.categoria_id === c.id).length, 'mensagem', 'mensagens'),
       onEdit: () => this.openEditCat(c),
       onArchive: () => this.requestArchiveCategory(c),
     }));
@@ -851,8 +793,8 @@ class App {
       const linkedCount = st.adminMemberships.filter(m => m.accessId === a.id).length;
       const msgCount = st.mensagens.filter(m => m.acesso_id === a.id).length;
       return {
-        id: a.id, nome: a.nome,
-        statsLabel: `${msgCount} mensagens · ${linkedCount} usuários`,
+        id: a.id, nome: a.nome, ativo: Boolean(a.ativo),
+        statsLabel: `${plural(msgCount, 'mensagem', 'mensagens')} · ${plural(linkedCount, 'pessoa', 'pessoas')}`,
         statusLabel: a.ativo ? 'Ativo' : 'Inativo',
         toggleLabel: a.ativo ? 'Desativar' : 'Ativar',
         onToggleStatus: () => a.ativo
@@ -862,14 +804,24 @@ class App {
       };
     });
 
+    const accessNames = new Map(st.acessos.map(access => [access.id, access.nome]));
     const accountRows = st.adminProfiles.map(account => {
-      const membershipCount = st.adminMemberships.filter(membership => membership.userId === account.id).length;
+      const memberAccesses = st.adminMemberships
+        .filter(membership => membership.userId === account.id)
+        .map(membership => accessNames.get(membership.accessId))
+        .filter(Boolean);
+      const accountIsSuperadmin = canViewAdministration(account.role);
       return {
         id: account.id,
         name: account.nome,
         email: account.email,
+        initials: String(account.nome || account.email || '?').split(/\s+/).filter(Boolean).map(word => word[0]).slice(0, 2).join('').toUpperCase(),
         roleLabel: this.roleLabel(account.role),
-        membershipLabel: `${membershipCount} ${membershipCount === 1 ? 'acesso' : 'acessos'}`,
+        isSuperadmin: accountIsSuperadmin,
+        // Superadministradores usam todos os acessos sem vínculo; só colaborador sem vínculo fica bloqueado.
+        withoutAccess: !accountIsSuperadmin && memberAccesses.length === 0,
+        accessLabel: accountIsSuperadmin && memberAccesses.length === 0 ? 'Todos os acessos' : memberAccesses.join(', '),
+        membershipLabel: plural(memberAccesses.length, 'acesso', 'acessos'),
         onMemberships: () => this.openMembershipModal(account.id),
         onResetPassword: () => this.requestResetPassword({ userId: account.id, name: account.nome, email: account.email }),
       };
@@ -879,12 +831,28 @@ class App {
     const pageTitles = { biblioteca: 'Biblioteca de mensagens', visaogeral: 'Visão geral', admin: 'Administração' };
     const favoritesCount = acessoMsgs.filter(m => st.favoriteIds.includes(m.id)).length;
     const adminTab = st.adminTab || 'mensagens';
-    const pendingRequest = st.solicitacoesPendentes.find(item => item.id === st.viewingSolicitacaoId);
+    const selectedRequest = this.selectedRequest();
     const previewing = acessoMsgs.find(x => x.id === st.previewingMsgId);
     const accessUsers = st.accessUsersModal;
 
+    // Telas 06, 07 e 08: título, resumo e ações da seção administrativa na faixa da marca.
+    const pendingCount = st.solicitacoesPendentes.length;
+    const adminBand = {
+      solicitacoes: { title: 'Solicitações', summary: `${pendingCount} aguardando sua decisão · operando em ${activeAcesso.nome}`, actions: [] },
+      mensagens: { title: 'Conteúdo', summary: `${plural(acessoMsgs.length, 'mensagem ativa', 'mensagens ativas')} · ${plural(acessoCats.length, 'categoria', 'categorias')}`, actions: 'content' },
+      categorias: { title: 'Conteúdo', summary: `${plural(acessoMsgs.length, 'mensagem ativa', 'mensagens ativas')} · ${plural(acessoCats.length, 'categoria', 'categorias')}`, actions: 'content' },
+      arquivados: { title: 'Conteúdo', summary: 'Mensagens e categorias arquivadas podem ser restauradas pelo mesmo registro.', actions: 'content' },
+      contas: { title: 'Contas e acessos', summary: `${plural(accountRows.length, 'conta', 'contas')} · ${plural(st.acessos.length, 'acesso', 'acessos')} · ${plural(accountRows.filter(row => row.withoutAccess).length, 'conta sem vínculo', 'contas sem vínculo')}`, actions: 'people' },
+      acessos: { title: 'Contas e acessos', summary: `${plural(st.acessos.length, 'acesso', 'acessos')} · ${plural(st.acessos.filter(access => access.ativo).length, 'ativo', 'ativos')}`, actions: 'people' },
+    }[adminTab];
+    const bandActions = adminBand.actions === 'content'
+      ? [{ label: 'Nova mensagem', onClick: () => this.openCreateMsg(), primary: true }, { label: 'Nova categoria', onClick: () => this.openCreateCat() }]
+      : adminBand.actions === 'people'
+        ? [{ label: 'Nova conta', onClick: () => this.openCreateAccount(), primary: true }, { label: 'Novo acesso', onClick: () => this.openCreateAccess() }]
+        : [];
+
     return {
-      isLogin: false, isApp: true, isLoading: false, theme,
+      isLogin: false, isApp: true, isLoading: false,
       appView,
       pageTitle: pageTitles[appView],
       isLib: appView === 'biblioteca', isOver: appView === 'visaogeral', isAdminView: appView === 'admin',
@@ -909,10 +877,13 @@ class App {
           },
         }] : []),
       ],
-      bandTitle: appView === 'admin' ? 'Administração' : heroGreeting,
+      bandTitle: appView === 'admin' ? adminBand.title : heroGreeting,
       bandSummary: appView === 'admin'
-        ? `${st.solicitacoesPendentes.length} ${st.solicitacoesPendentes.length === 1 ? 'solicitação pendente' : 'solicitações pendentes'} · operando em ${activeAcesso.nome}`
-        : `${acessoMsgs.length} ${acessoMsgs.length === 1 ? 'padrão disponível' : 'padrões disponíveis'} · ${favoritesCount} ${favoritesCount === 1 ? 'favorita' : 'favoritas'}`,
+        ? adminBand.summary
+        : `${plural(acessoMsgs.length, 'padrão disponível', 'padrões disponíveis')} · ${plural(favoritesCount, 'favorita', 'favoritas')}`,
+      bandActions: appView === 'admin' ? bandActions : [],
+      // FR-001: "Acesso" para quem usa a biblioteca, "Operando em" na Administração.
+      accessSelectLabel: appView === 'admin' ? 'Operando em' : 'Acesso',
       // Tela 02: a Visão geral só tem saudação e resumo na faixa; busca e pílulas são da Biblioteca.
       showLibraryTools: appView === 'biblioteca',
       userMenuOpen: st.userMenuOpen,
@@ -1017,7 +988,7 @@ class App {
       openPalette: () => this.setState({ paletteOpen: true, paletteQuery: '', paletteIndex: 0 }),
       closePalette: () => this.setState({ paletteOpen: false }),
       paletteRows: st.paletteOpen ? this.paletteList().map((m, i) => ({
-        titulo: m.titulo, categoria: categoryName(m), catColor: this.categoryColor(categoryName(m)),
+        titulo: m.titulo, categoria: categoryName(m),
         active: i === st.paletteIndex,
         onPick: () => this.copyFromPalette(m),
       })) : [],
@@ -1156,8 +1127,28 @@ class App {
         departamento: s.acessos ? s.acessos.nome : '—',
         usuario: s.solicitante ? s.solicitante.nome : '—',
         tipoLabel: requestTypeLabel(s.tipo),
+        selected: s.id === selectedRequest?.id,
         onOpen: () => this.openReview(s.id),
       })),
+
+      // Tela 06: a solicitação escolhida (ou a mais antiga) fica no painel ao lado da lista.
+      requestPanel: selectedRequest ? {
+        typeLabel: requestTypeLabel(selectedRequest.tipo),
+        isCreation: selectedRequest.tipo === 'criacao', isArchive: isArchiveRequest(selectedRequest.tipo),
+        department: selectedRequest.acessos?.nome || '—', user: selectedRequest.solicitante?.nome || '—',
+        dateLabel: selectedRequest.criado_em ? new Date(selectedRequest.criado_em).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '',
+        previousCategory: selectedRequest.categoria_anterior, category: selectedRequest.categoria,
+        previousTitle: selectedRequest.titulo_anterior, title: selectedRequest.titulo,
+        previousContent: selectedRequest.conteudo_anterior, content: selectedRequest.conteudo,
+        tags: Array.isArray(selectedRequest.tags) ? selectedRequest.tags : [],
+        rejectMode: st.solicitacaoRejectMode, reason: st.rejectMotivo,
+        saving: st.reviewSaving, error: st.reviewError, invalid: st.reviewInvalid,
+        onStartReject: () => this.setState({ solicitacaoRejectMode: true, reviewError: '', reviewInvalid: [] }),
+        onCancelReject: () => { if (!this.state.reviewSaving) this.setState({ solicitacaoRejectMode: false, rejectMotivo: '', reviewError: '', reviewInvalid: [] }); },
+        onReasonChange: (e) => this.setState({ rejectMotivo: e.target.value, reviewError: '', reviewInvalid: [] }),
+        onApprove: () => this.approveReviewedRequest(),
+        onReject: () => this.rejectReviewedRequest(),
+      } : null,
       archivedLoading: st.archivedLoading,
       archivedMessageRows: st.archivedMessages.map(message => ({
         ...message,
@@ -1167,26 +1158,6 @@ class App {
         ...category,
         onRestore: () => this.restoreArchivedCategory(category)
       })),
-
-      reviewModal: pendingRequest ? {
-        open: st.showSolicitacaoModal,
-        request: {
-          typeLabel: requestTypeLabel(pendingRequest.tipo),
-          isCreation: pendingRequest.tipo === 'criacao', isArchive: isArchiveRequest(pendingRequest.tipo),
-          department: pendingRequest.acessos?.nome || '—', user: pendingRequest.solicitante?.nome || '—',
-          previousCategory: pendingRequest.categoria_anterior, category: pendingRequest.categoria,
-          previousTitle: pendingRequest.titulo_anterior, title: pendingRequest.titulo,
-          previousContent: pendingRequest.conteudo_anterior, content: pendingRequest.conteudo
-        },
-        rejectMode: st.solicitacaoRejectMode, reason: st.rejectMotivo,
-        saving: st.reviewSaving, error: st.reviewError, invalid: st.reviewInvalid,
-        onClose: () => this.closeReview(),
-        onStartReject: () => this.setState({ solicitacaoRejectMode: true, reviewError: '', reviewInvalid: [] }),
-        onCancelReject: () => { if (!this.state.reviewSaving) this.setState({ solicitacaoRejectMode: false, rejectMotivo: '', reviewError: '', reviewInvalid: [] }); },
-        onReasonChange: (e) => this.setState({ rejectMotivo: e.target.value, reviewError: '', reviewInvalid: [] }),
-        onApprove: () => this.approveReviewedRequest(),
-        onReject: () => this.rejectReviewedRequest()
-      } : { open: false },
 
       toasts: st.toasts
     };
@@ -1465,37 +1436,39 @@ class App {
 
   /* request review */
 
+  // Tela 06: escolher uma solicitação só troca o painel lateral; a mais antiga vem selecionada.
   openReview(requestId) {
+    if (this.state.reviewSaving) return;
     this.setState({
-      showSolicitacaoModal: true, viewingSolicitacaoId: requestId,
+      viewingSolicitacaoId: requestId,
       solicitacaoRejectMode: false, rejectMotivo: '', reviewError: '', reviewInvalid: [],
     });
   }
-  closeReview() {
-    if (this.state.reviewSaving) return;
-    this.setState({ showSolicitacaoModal: false, solicitacaoRejectMode: false, reviewError: '', reviewInvalid: [] });
+  selectedRequest() {
+    const pending = this.state.solicitacoesPendentes;
+    return pending.find(item => item.id === this.state.viewingSolicitacaoId) ?? pending[0] ?? null;
   }
   async handleReviewError(error, request) {
     const policy = await this.handleError(error, {
       setFormError: message => this.setState({ reviewError: message }),
-      closeDetail: () => this.setState({ showSolicitacaoModal: false, solicitacaoRejectMode: false }),
+      closeDetail: () => this.setState({ viewingSolicitacaoId: null, solicitacaoRejectMode: false }),
       refresh: () => Promise.all([this.reloadPendingRequests(), this.reloadLibrary(request.acesso_id)]),
       messages: { CONFLICT: 'A mensagem mudou desde a proposta. Recarregamos o estado atual; revise antes de decidir.' },
     });
     // CONFLICT on a request that left the pending list means someone else already decided it.
     if (policy.code === 'CONFLICT' && !this.state.solicitacoesPendentes.some(item => item.id === request.id)) {
-      this.setState({ showSolicitacaoModal: false, solicitacaoRejectMode: false, reviewError: '' });
+      this.setState({ viewingSolicitacaoId: null, solicitacaoRejectMode: false, reviewError: '' });
       this.showToast('Esta solicitação já foi revisada. Recarregamos o estado atual.', 'error');
     }
   }
   async approveReviewedRequest() {
     if (this.state.reviewSaving) return;
-    const request = this.state.solicitacoesPendentes.find(item => item.id === this.state.viewingSolicitacaoId);
+    const request = this.selectedRequest();
     if (!request) return;
     this.setState({ reviewSaving: true, reviewError: '' });
     try {
       await api.approveMessageRequest(request.id);
-      this.setState({ reviewSaving: false, showSolicitacaoModal: false });
+      this.setState({ reviewSaving: false, viewingSolicitacaoId: null });
       await Promise.all([this.reloadLibrary(request.acesso_id), this.reloadPendingRequests()]);
       this.showToast('Solicitação aprovada.', 'success');
     } catch (error) {
@@ -1505,7 +1478,7 @@ class App {
   }
   async rejectReviewedRequest() {
     if (this.state.reviewSaving) return;
-    const request = this.state.solicitacoesPendentes.find(item => item.id === this.state.viewingSolicitacaoId);
+    const request = this.selectedRequest();
     if (!request) return;
     const reason = this.state.rejectMotivo.trim();
     if (!reason || reason.length > 500) {
@@ -1516,7 +1489,7 @@ class App {
     this.setState({ reviewSaving: true, reviewError: '' });
     try {
       await api.rejectMessageRequest(request.id, reason);
-      this.setState({ reviewSaving: false, showSolicitacaoModal: false, solicitacaoRejectMode: false, rejectMotivo: '' });
+      this.setState({ reviewSaving: false, viewingSolicitacaoId: null, solicitacaoRejectMode: false, rejectMotivo: '' });
       await this.reloadPendingRequests();
       this.showToast('Solicitação rejeitada.', 'success');
     } catch (error) {
@@ -1805,33 +1778,27 @@ class App {
   /* ---------------- view (template — identical to prototype) ---------------- */
 
   view(v) {
+    // Carregamento com a mesma estrutura da Biblioteca: faixa da marca e lista com leitura ao lado.
     if (v.isLoading) {
-      const skel = (w, h, extra) => `<div class="dp-skeleton" style="width:${w}; height:${h}; border-radius:8px; ${extra || ''}"></div>`;
+      const skel = (width, height) => `<div class="dp-skeleton" style="width:${width}; height:${height};"></div>`;
       return `
-      <div style="min-height:100vh; background:${v.theme.pageBg};">
-        <div style="padding:14px 24px; border-bottom:1px solid ${v.theme.border}; background:${v.theme.cardBg};">
-          <div style="max-width:1400px; margin:0 auto; display:flex; align-items:center; gap:20px;">
-            <img src="${v.theme.logoSrc}" alt="DentalPlus" style="height:26px; width:auto; opacity:.5;" />
-            ${skel('1px', '26px')}
-            ${skel('220px', '18px')}
-            ${skel('320px', '38px', 'margin-left:auto; border-radius:12px;')}
+      <div class="dp-app" aria-busy="true">
+        <header class="dp-band">
+          <div class="dp-band__top">
+            <img class="dp-band__logo" src="assets/dp2-logo-on-brand.png" alt="DentalPlus" width="595" height="100" />
           </div>
-        </div>
-        <div style="max-width:1400px; margin:0 auto; padding:24px;">
-          <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; margin-bottom:28px;">
-            ${skel('100%', '96px', 'border-radius:14px;')}${skel('100%', '96px', 'border-radius:14px;')}${skel('100%', '96px', 'border-radius:14px;')}
-          </div>
-          <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px;">
-            ${Array.from({ length: 8 }).map(() => skel('100%', '170px', 'border-radius:14px;')).join('')}
-          </div>
+          <div class="dp-band__headline">${skel('280px', '34px')}</div>
+        </header>
+        <div class="dp-library">
+          <div class="dp-library__list">${Array.from({ length: 6 }).map(() => skel('100%', '72px')).join('')}</div>
+          <div class="dp-reading">${skel('60%', '22px')}${skel('100%', '140px')}</div>
         </div>
       </div>`;
     }
     if (v.isNoAcesso) {
       return `<div class="dp-app">${renderNoAccessView(v, (fn) => this.h(fn))
-        + this.viewModals(v, v.theme, (fn) => this.h(fn))}</div>`;
+        + this.viewModals(v, (fn) => this.h(fn))}</div>`;
     }
-    const t = v.theme;
     const H = (fn) => this.h(fn);
     let body = '';
 
@@ -1844,11 +1811,11 @@ class App {
       if (v.isLib) body += renderCategoryPills(v, H);
       if (v.isLib) body += this.viewLibrary(v, H);
       if (v.isOver) body += this.viewVisaoGeral(v, H);
-      if (v.isAdminView) body += this.viewAdmin(v, t, H);
+      if (v.isAdminView) body += this.viewAdmin(v, H);
       body += renderLibraryReadingDialog(v, H);
     }
 
-    body += this.viewModals(v, t, H);
+    body += this.viewModals(v, H);
     body += renderReleaseNotesDialog(v.releaseNotes, H);
 
     return `<div class="dp-app">${body}</div>`;
@@ -1862,16 +1829,15 @@ class App {
     return renderLibraryOverview(v, H);
   }
 
-  viewAdmin(v, t, H) {
-    return renderAdminView(v, t, H);
+  viewAdmin(v, H) {
+    return renderAdminView(v, H);
   }
 
-  viewModals(v, t, H) {
-    let out = renderMessageRequestModal(v.messageRequestModal, t, H);
-    out += renderMessageEditorModal(v.messageEditor, t, H);
-    out += renderAdminConfirmationModal(v.confirmModal, t, H);
-    out += renderRequestReviewModal(v.reviewModal, t, H);
-    out += renderStructuralModals(v.structuralModals, t, H);
+  viewModals(v, H) {
+    let out = renderMessageRequestModal(v.messageRequestModal, H);
+    out += renderMessageEditorModal(v.messageEditor, H);
+    out += renderAdminConfirmationModal(v.confirmModal, H);
+    out += renderStructuralModals(v.structuralModals, H);
     const stay = H(() => {});
 
     if (v.showApprovalPopup) {

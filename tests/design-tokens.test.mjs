@@ -4,7 +4,7 @@ import test from 'node:test';
 
 // Arquivos já migrados para as classes do design system: neles não pode sobrar cor literal.
 // A lista cresce a cada etapa (contracts/design-tokens.md).
-const MIGRATED_FILES = ['app.js', 'views/shell-view.mjs', 'views/library-view.mjs', 'views/modal-view.mjs'];
+const MIGRATED_FILES = ['app.js', 'views/shell-view.mjs', 'views/library-view.mjs', 'views/modal-view.mjs', 'views/admin-view.mjs'];
 
 const file = (path) => new URL(`../${path}`, import.meta.url);
 const css = await readFile(file('styles/design-system.css'), 'utf8');

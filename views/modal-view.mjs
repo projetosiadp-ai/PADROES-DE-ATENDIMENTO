@@ -1,4 +1,4 @@
-import { ICONS } from '../ui/icons.mjs';
+﻿import { ICONS } from '../ui/icons.mjs';
 
 const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;')
@@ -100,7 +100,7 @@ function archiveConfirmation(model, register) {
   });
 }
 
-export function renderMessageRequestModal(model, theme, register) {
+export function renderMessageRequestModal(model, register) {
   if (!model?.open) return '';
   return model.type === 'arquivamento'
     ? archiveConfirmation(model, register)
@@ -108,7 +108,7 @@ export function renderMessageRequestModal(model, theme, register) {
 }
 
 // Superadministrator create/edit form for published messages.
-export function renderMessageEditorModal(model, theme, register) {
+export function renderMessageEditorModal(model, register) {
   if (!model?.open) return '';
   const errorId = 'message-editor-error';
   const categoryOptions = model.categories
@@ -142,7 +142,7 @@ export function renderMessageEditorModal(model, theme, register) {
 
 // While `saving`, both actions are disabled and the dialog is busy, so neither a second click,
 // Cancelar, the overlay nor Escape can interrupt the confirmed operation.
-export function renderAdminConfirmationModal(model, theme, register) {
+export function renderAdminConfirmationModal(model, register) {
   if (!model?.open) return '';
   const saving = Boolean(model.saving);
   return renderDialog({
@@ -153,40 +153,7 @@ export function renderAdminConfirmationModal(model, theme, register) {
   });
 }
 
-export function renderRequestReviewModal(model, theme, register) {
-  if (!model?.open || !model.request) return '';
-  const request = model.request;
-  const comparison = (label, before, after) => `
-    <div class="dp-compare">
-      <span class="dp-label">${escapeHtml(label)}</span>
-      <div class="dp-compare__grid${request.isCreation || after == null ? ' dp-compare__grid--single' : ''}">
-        ${request.isCreation ? '' : `<div class="dp-compare__cell"><span class="dp-compare__tag">Antes</span>${escapeHtml(before || '—')}</div>`}
-        ${after != null ? `<div class="dp-compare__cell dp-compare__cell--new"><span class="dp-compare__tag">Proposto</span>${escapeHtml(after)}</div>` : ''}
-      </div>
-    </div>`;
-
-  const body = `
-    ${request.isArchive
-      ? `${comparison('Título', request.previousTitle, null)}${comparison('Conteúdo', request.previousContent, null)}`
-      : `${comparison('Categoria', request.previousCategory, request.category)}${comparison('Título', request.previousTitle, request.title)}${comparison('Conteúdo', request.previousContent, request.content)}`}
-    ${model.rejectMode ? field('Motivo da rejeição', `<textarea class="dp-field" aria-label="Motivo da rejeição" maxlength="500" rows="3" data-input="${register(model.onReasonChange)}" ${invalid(model, 'reason', 'review-error')} ${disabled(model.saving)}>${escapeHtml(model.reason)}</textarea>`) : ''}
-    ${errorMessage(model.error, 'review-error')}`;
-
-  const actions = model.rejectMode
-    ? button('Cancelar', model.onCancelReject, register, { saving: model.saving })
-      + button(model.saving ? 'Rejeitando…' : 'Confirmar rejeição', model.onReject, register, { variant: 'danger', saving: model.saving })
-    : button('Fechar', model.onClose, register, { variant: 'ghost', saving: model.saving })
-      + button('Rejeitar', model.onStartReject, register, { variant: 'danger', saving: model.saving })
-      + button(model.saving ? 'Aprovando…' : 'Aprovar', model.onApprove, register, { variant: 'primary', saving: model.saving });
-
-  return renderDialog({
-    name: `Solicitação de ${request.typeLabel}`, kicker: 'Revisão',
-    context: `${request.department} · ${request.user}`,
-    size: 'lg', saving: model.saving, onClose: model.onClose, register, body, actions, layer: 125,
-  });
-}
-
-export function renderStructuralModals(model, theme, register) {
+export function renderStructuralModals(model, register) {
   if (!model) return '';
   let output = '';
   const formActions = (onClose, onSubmit, submitLabel, saving) =>

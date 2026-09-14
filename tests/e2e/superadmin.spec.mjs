@@ -22,14 +22,16 @@ async function openPendingRequests(page) {
   await page.getByLabel('Acesso ativo').selectOption(TEST_IDS.accessAlpha);
   await page.getByRole('button', { name: 'Administração' }).click();
   await page.getByRole('tab', { name: /Solicitações/ }).click();
-  await expect(page.getByText('Solicitações de Aprovação')).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Solicitação selecionada' })).toBeVisible();
 }
 
+// Tela 06: a lista fica à esquerda (mais antiga primeiro) e a decisão acontece no painel ao lado.
 async function openNewestRequest(page, title) {
-  await page.getByRole('button', { name: 'Analisar' }).last().click();
-  const dialog = page.getByRole('dialog', { name: 'Solicitação de Criação' });
-  await expect(dialog).toContainText(title);
-  return dialog;
+  await page.locator('[data-request-id]').last().click();
+  const panel = page.getByRole('complementary', { name: 'Solicitação selecionada' });
+  await expect(panel).toContainText(title);
+  await expect(panel).toContainText('Criação');
+  return panel;
 }
 
 test('superadministrador aprova e rejeita propostas com decisão persistida', async ({ page }) => {
@@ -218,13 +220,15 @@ test('superadministrador cria conta com vários acessos, altera vínculos e rede
   await expect(passwordDialog).toContainText(initialPassword, { timeout: 20_000 });
   await passwordDialog.getByRole('button', { name: 'Concluir' }).click();
   const accountRow = page.getByRole('row', { name: new RegExp(name) });
-  await expect(accountRow).toContainText('2 acessos');
+  await expect(accountRow).toContainText('Atendimento Local');
+  await expect(accountRow).toContainText('Comercial Local');
 
   await accountRow.getByRole('button', { name: 'Gerenciar acessos' }).click();
   const membershipDialog = page.getByRole('dialog', { name: new RegExp(`Acessos de ${name}`) });
   await membershipDialog.getByRole('checkbox', { name: 'Comercial Local' }).uncheck();
   await membershipDialog.getByRole('button', { name: 'Concluir' }).click();
-  await expect(accountRow).toContainText('1 acesso');
+  await expect(accountRow).toContainText('Atendimento Local');
+  await expect(accountRow).not.toContainText('Comercial Local');
 
   await accountRow.getByRole('button', { name: 'Redefinir senha' }).click();
   await page.getByRole('alertdialog', { name: 'Redefinir senha' }).getByRole('button', { name: 'Confirmar' }).click();

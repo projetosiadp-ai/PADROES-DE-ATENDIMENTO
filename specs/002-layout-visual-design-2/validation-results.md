@@ -147,3 +147,41 @@ indisponível.
 ### Publicação
 
 Pendente de aprovação do responsável (prévia do ramo `002-etapa-2-janelas`).
+
+## Etapa 3 (Administração) — 2026-09-14
+
+### Testes automatizados (T046, verificação local)
+
+| Suíte | Resultado |
+|---|---|
+| `npm run test:unit` | 83 de 83 (7 testes novos em `tests/admin-view.test.mjs`) |
+| `npm run test:e2e` | 30 de 30 — 29 na bateria e 1 depois da correção do menu da conta (ver abaixo) |
+| `npm run test:a11y` | 9 de 9, com auditoria nova da seção Solicitações |
+| `npm run test:visual` | 27 de 27 (8 fotos novas: quatro seções × dois tamanhos) |
+
+### Defeitos encontrados e corrigidos na verificação
+
+- No celular, o menu da conta abria por baixo dos botões da faixa ("Novo acesso" cobria "Sair"). A barra superior da
+  faixa passou a ficar acima do título, das ações e da busca.
+- A pílula da seção ativa não ficava destacada: o estilo só reconhecia `aria-pressed`, e as seções são abas com
+  `aria-selected`.
+- O cabeçalho "Ações" das tabelas não acompanhava o alinhamento à direita dos botões.
+- A comparação de fotos não acusou a pílula sem destaque, porque a diferença ficou abaixo da tolerância de 1% dos pixels.
+  As fotos da Administração foram apagadas e geradas de novo depois das correções.
+
+### Decisões
+
+- A decisão sobre solicitações acontece no painel ao lado da lista (tela 06); a janela de revisão deixou de existir e o
+  histórico `renderRequestReviewModal` foi removido. A solicitação mais antiga fica selecionada por padrão.
+- Conta de colaborador sem nenhum acesso mostra "Sem vínculo" e "Conceder acesso" (abre a janela de vínculos). A ação
+  "Senha" continua disponível nessa linha, embora o desenho mostre só "Conceder acesso", para não perder a redefinição de
+  senha (FR-014). Superadministrador sem vínculo mostra "Todos os acessos".
+- As fotos da Administração cobrem só a área visível e mascaram linhas, listas e painéis de dados, que crescem a cada
+  bateria.
+- `ui/legacy-theme.mjs` foi removido: nenhuma tela monta mais estilo com cores embutidas, e as views deixaram de receber o
+  parâmetro de tema. A cor inicial sugerida ao criar um acesso (dado gravado no banco) foi para
+  `domain/access-defaults.mjs`.
+
+### Publicação
+
+Pendente de aprovação do responsável (prévia do ramo `002-etapa-3-administracao`, sem gravar dados).

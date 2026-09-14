@@ -136,13 +136,13 @@ correspondente (ramo → prévia na Vercel → aprovação do responsável → `
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T042 [P] [US3] Criar `tests/admin-view.test.mjs`: pílulas "Solicitações", "Mensagens", "Categorias", "Arquivados", "Acessos" e "Contas" com a ativa marcada; painel da solicitação com antes/proposto, "Rejeitar com motivo" e "Aprovar e publicar"; "Conceder acesso" apenas para contas sem vínculo e ligado ao manipulador de vínculos
+- [X] T042 [P] [US3] Criar `tests/admin-view.test.mjs`: pílulas "Solicitações", "Mensagens", "Categorias", "Arquivados", "Acessos" e "Contas" com a ativa marcada; painel da solicitação com antes/proposto, "Rejeitar com motivo" e "Aprovar e publicar"; "Conceder acesso" apenas para contas sem vínculo e ligado ao manipulador de vínculos
 
 ### Implementation for User Story 3
 
-- [ ] T043 [US3] Em `app.js`, criar o estado `selectedRequestId` e o modelo do painel lateral de solicitações em `renderVals()`, reutilizando `approveReviewedRequest()` e `rejectReviewedRequest()`; abaixo de 720 px o painel fica abaixo da lista
-- [ ] T044 [US3] Reescrever `renderAdminView()` em `views/admin-view.mjs` (telas 06, 07 e 08): título e resumo da seção no cabeçalho, pílulas de seção, Solicitações em lista + painel, Mensagens em tabela + painel de categorias com contagem, Categorias, Arquivados, Acessos e Contas em tabela + painel de acessos com situação, "Sem vínculo" e "Conceder acesso" (abre `openMembershipModal(userId)`), tabelas viram cartões abaixo de 720 px; remover de `index.html` as regras `.dp-card*`, `.dp-admin-card`, `.dp-table-row` e `.dp-tooltip*`, agora substituídas pelo design system
-- [ ] T045 [US3] Adaptar `tests/e2e/superadmin.spec.mjs` e `tests/e2e/mobile.spec.mjs` (Contas a 360 px) à nova Administração; acrescentar fotos das seções em `tests/e2e/visual.spec.mjs`, auditorias em `tests/e2e/accessibility.spec.mjs` e `views/admin-view.mjs` em `MIGRATED_FILES`
+- [X] T043 [US3] Em `app.js`, criar o estado `selectedRequestId` e o modelo do painel lateral de solicitações em `renderVals()`, reutilizando `approveReviewedRequest()` e `rejectReviewedRequest()`; abaixo de 720 px o painel fica abaixo da lista
+- [X] T044 [US3] Reescrever `renderAdminView()` em `views/admin-view.mjs` (telas 06, 07 e 08): título e resumo da seção no cabeçalho, pílulas de seção, Solicitações em lista + painel, Mensagens em tabela + painel de categorias com contagem, Categorias, Arquivados, Acessos e Contas em tabela + painel de acessos com situação, "Sem vínculo" e "Conceder acesso" (abre `openMembershipModal(userId)`), tabelas viram cartões abaixo de 720 px; remover de `index.html` as regras `.dp-card*`, `.dp-admin-card`, `.dp-table-row` e `.dp-tooltip*`, agora substituídas pelo design system
+- [X] T045 [US3] Adaptar `tests/e2e/superadmin.spec.mjs` e `tests/e2e/mobile.spec.mjs` (Contas a 360 px) à nova Administração; acrescentar fotos das seções em `tests/e2e/visual.spec.mjs`, auditorias em `tests/e2e/accessibility.spec.mjs` e `views/admin-view.mjs` em `MIGRATED_FILES`
 - [ ] T046 [US3] Atualizar `domain/release-notes.mjs` para a Etapa 3, verificação local completa e publicação da Etapa 3 (ramo `002-etapa-3-administracao`, prévia sem gravar dados, aprovação, `main`)
 
 **Checkpoint**: todas as telas existentes no Design 2.0

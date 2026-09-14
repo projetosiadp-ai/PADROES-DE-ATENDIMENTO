@@ -1,4 +1,4 @@
-import AxeBuilder from '@axe-core/playwright';
+﻿import AxeBuilder from '@axe-core/playwright';
 import { test, expect } from '@playwright/test';
 
 import { dismissReleaseNotice, LOCAL_ACCOUNTS, LOCAL_SUPABASE_URL, loginAs, openLibrary } from '../fixtures/auth.mjs';
@@ -130,6 +130,11 @@ test('@a11y administração e diálogos estruturais não têm violações axe cr
   await page.getByRole('button', { name: 'Administração' }).click();
   await expect(page.getByRole('tab', { name: 'Mensagens' })).toBeVisible();
   await expectAccessible(page, 'administração');
+
+  await page.getByRole('tab', { name: /Solicitações/ }).click();
+  await expect(page.getByRole('complementary', { name: 'Solicitação selecionada' })).toBeVisible();
+  await expectAccessible(page, 'solicitações com painel de decisão');
+  await page.getByRole('tab', { name: 'Mensagens' }).click();
 
   await page.getByRole('button', { name: 'Nova mensagem' }).first().click();
   await expectAccessible(page, 'nova mensagem administrativa', DIALOG);

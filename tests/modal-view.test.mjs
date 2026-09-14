@@ -5,17 +5,15 @@ import {
   renderAdminConfirmationModal,
   renderMessageEditorModal,
   renderMessageRequestModal,
-  renderRequestReviewModal,
   renderStructuralModals,
 } from '../views/modal-view.mjs';
 
-const theme = new Proxy({}, { get: () => '#000' });
 const register = (() => { let next = 0; return () => `h${next++}`; })();
 const noop = () => {};
 
 const confirmation = (saving) => renderAdminConfirmationModal({
   open: true, title: 'Arquivar mensagem', message: 'Pode ser restaurada.', saving, onClose: noop, onConfirm: noop,
-}, theme, register);
+}, register);
 
 const buttons = (html) => [...html.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map(match => match[0]);
 
@@ -38,7 +36,7 @@ test('editor de mensagens aponta campos inválidos para a mensagem de erro', () 
     open: true, title: 'Nova mensagem', categories: [{ id: 'c1', nome: 'Boas-vindas' }],
     form: { categoryId: 'c1', title: '', tagInput: '', tags: [], content: '' },
     tagChips: [], saving: false, error: 'Preencha título e conteúdo.', invalid: ['title', 'content'],
-  }, theme, register);
+  }, register);
   assert.strictEqual([...html.matchAll(/aria-invalid="true" aria-describedby="message-editor-error"/g)].length, 2);
   assert.match(html, /id="message-editor-error" role="alert"/);
 });
@@ -58,21 +56,17 @@ const everyDialog = () => [
   ['solicitar nova mensagem', renderMessageRequestModal({
     open: true, type: 'criacao', accessibleName: 'Solicitar nova mensagem', categories: [], onClose: noop,
     form: { categoryId: '', title: '', tagsText: '', content: '' }, saving: false, invalid: [],
-  }, theme, register), 'Enviar para revisão'],
+  }, register), 'Enviar para revisão'],
   ['solicitar arquivamento', renderMessageRequestModal({
     open: true, type: 'arquivamento', accessibleName: 'Solicitar arquivamento de Boas-vindas', saving: false, onClose: noop,
-  }, theme, register), 'Enviar solicitação'],
+  }, register), 'Enviar solicitação'],
   ['editor', renderMessageEditorModal({
     open: true, title: 'Editar mensagem', categories: [], form: { categoryId: '', title: '', tagInput: '', tags: [], content: '' },
     tagChips: [], saving: false, invalid: [], onClose: noop,
-  }, theme, register), 'Salvar'],
+  }, register), 'Salvar'],
   ['confirmação', confirmation(false), 'Confirmar'],
-  ['revisão', renderRequestReviewModal({
-    open: true, saving: false, rejectMode: false, reason: '', invalid: [], onClose: noop,
-    request: { typeLabel: 'Criação', isCreation: true, isArchive: false, department: 'Atendimento', user: 'Ana', category: 'Geral', title: 'T', content: 'C' },
-  }, theme, register), 'Aprovar'],
-  ['novo acesso', renderStructuralModals({ access: { open: true, form: { name: '', description: '', color: '#000000' }, saving: false, onClose: noop } }, theme, register), 'Criar acesso'],
-  ['senha temporária', renderStructuralModals({ temporaryPassword: { open: true, value: 'Senha!123', copied: false, onClose: noop } }, theme, register), 'Concluir'],
+  ['novo acesso', renderStructuralModals({ access: { open: true, form: { name: '', description: '', color: '#000000' }, saving: false, onClose: noop } }, register), 'Criar acesso'],
+  ['senha temporária', renderStructuralModals({ temporaryPassword: { open: true, value: 'Senha!123', copied: false, onClose: noop } }, register), 'Concluir'],
 ];
 
 test('toda janela tem cabeçalho da marca com o título como nome acessível', () => {
@@ -108,7 +102,7 @@ test('as janelas não carregam cor literal', async () => {
 test('diálogos estruturais ficam ocupados enquanto salvam', () => {
   const html = renderStructuralModals({
     category: { open: true, title: 'Nova categoria', name: 'X', saving: true, onClose: noop, onSubmit: noop },
-  }, theme, register);
+  }, register);
   assert.match(html, /role="dialog"[^>]*aria-busy="true"/);
   assert.ok(buttons(html).every(button => /\bdisabled\b/.test(button)));
 });

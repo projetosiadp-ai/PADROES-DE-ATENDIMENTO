@@ -125,12 +125,29 @@ test('@visual janela criar conta', async ({ page }) => {
   await expect(dialog).toHaveScreenshot('janela-criar-conta.png', { mask: [dialog.locator('fieldset')] });
 });
 
-test('@visual administração de solicitações', async ({ page }) => {
-  await loginAs(page, LOCAL_ACCOUNTS.superadmin);
-  await expect(page.getByTestId('library-ready')).toBeVisible({ timeout: 15_000 });
-  await dismissPendingNotice(page);
-  await dismissReleaseNotice(page);
-  await page.getByRole('button', { name: 'Administração' }).click();
-  await expect(page.getByRole('tab', { name: 'Mensagens' })).toBeVisible();
-  await shot(page, 'administracao.png');
-});
+// Etapa 3: a Administração acumula registros a cada bateria. A foto é da área visível, com
+// linhas, listas e painéis de dados mascarados: compara faixa, pílulas, cabeçalhos e layout.
+const ADMIN_SECTIONS = [
+  ['Solicitações', 'administracao-solicitacoes.png'],
+  ['Mensagens', 'administracao-mensagens.png'],
+  ['Contas', 'administracao-contas.png'],
+  ['Acessos', 'administracao-acessos.png'],
+];
+
+for (const [tab, name] of ADMIN_SECTIONS) {
+  test(`@visual administração — ${tab.toLowerCase()}`, async ({ page }) => {
+    await openLibrary(page, LOCAL_ACCOUNTS.superadmin);
+    await page.getByLabel('Acesso ativo').selectOption(TEST_DATA.accessAlpha.id);
+    await page.getByRole('button', { name: 'Administração' }).click();
+    await page.getByRole('tab', { name: new RegExp(`^${tab}`) }).click();
+    await expect(page.getByRole('tab', { name: new RegExp(`^${tab}`) })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByText(/Carregando/)).toHaveCount(0);
+    await settleVisual(page);
+    await expect(page).toHaveScreenshot(name, {
+      mask: [
+        ...volatileRegions(page),
+        page.locator('.dp-admin tbody, .dp-admin .dp-list, .dp-admin .dp-side-list, .dp-admin .dp-request, .dp-admin .dp-empty'),
+      ],
+    });
+  });
+}

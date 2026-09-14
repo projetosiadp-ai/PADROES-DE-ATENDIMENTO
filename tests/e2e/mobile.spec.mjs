@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+﻿import { test, expect } from '@playwright/test';
 
 import { LOCAL_ACCOUNTS, openLibrary } from '../fixtures/auth.mjs';
 
@@ -70,9 +70,12 @@ test('@a11y administração usa cartões responsivos sem overflow a 360 px', asy
 
   await page.getByRole('button', { name: 'Administração' }).click();
   await page.getByRole('tab', { name: 'Contas' }).click();
-  await expect(page.getByRole('heading', { name: 'Contas' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Contas', exact: true })).toBeVisible();
   await expectNoPageOverflow(page, 'contas administrativas');
-  await expect(page.locator('.dp-admin-card').first()).toBeVisible();
+  // Abaixo de 720 px a tabela vira cartões: cabeçalho oculto e cada linha em bloco.
+  const firstRow = page.getByRole('table', { name: 'Contas internas' }).locator('tbody tr').first();
+  await expect(firstRow).toBeVisible();
+  expect(await firstRow.evaluate(row => getComputedStyle(row).display)).toBe('block');
 
   await page.getByRole('button', { name: 'Nova conta' }).click();
   await expectNoPageOverflow(page, 'modal de nova conta');

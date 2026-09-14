@@ -74,6 +74,7 @@ export function renderBrandBand(model, register) {
           ${model.navItems.map(item => navButton(item, register)).join('')}
         </nav>
         <span class="dp-band__spacer"></span>
+        <span class="dp-access-label" aria-hidden="true">${escapeHtml(model.accessSelectLabel ?? 'Acesso')}</span>
         <select class="dp-access-select" aria-label="Acesso ativo" data-change="${register(model.onChangeActiveAcesso)}">
           ${model.userAcessosOptions.map(option => `<option value="${escapeHtml(option.id)}" ${option.id === model.activeAcessoId ? 'selected' : ''}>${escapeHtml(option.nome)}</option>`).join('')}
         </select>
@@ -84,8 +85,11 @@ export function renderBrandBand(model, register) {
         </span>
       </div>
       <div class="dp-band__headline">
-        <h1>${escapeHtml(model.bandTitle)}</h1>
-        <div class="dp-band__summary" data-volatile>${escapeHtml(model.bandSummary)}</div>
+        <div style="min-width:0;">
+          <h1>${escapeHtml(model.bandTitle)}</h1>
+          <div class="dp-band__summary" data-volatile>${escapeHtml(model.bandSummary)}</div>
+        </div>
+        ${model.bandActions?.length ? `<div class="dp-band__actions">${model.bandActions.map(item => `<button type="button" class="${item.primary ? 'dp-btn-on-brand' : 'dp-btn-outline-brand'}" data-click="${register(item.onClick)}">${item.primary ? ICONS.plus : ''}${escapeHtml(item.label)}</button>`).join('')}</div>` : ''}
       </div>
       ${tools}
     </header>`;
