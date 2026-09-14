@@ -1,14 +1,24 @@
 <!--
 Sync Impact Report
-- Version change: 1.0.0 -> 2.0.0
+- Version change: 2.0.0 -> 3.0.0
 - Modified principles:
-  - II. Autorização no Servidor e Menor Privilégio: modelo de três papéis substituído
-    pelo modelo exclusivo de colaborador e superadministrador
+  - IV. Experiência Inclusiva, Responsiva e Consistente: a obrigação de manter contraste legível
+    "nos temas claro e escuro" foi substituída pela operação em um único tema claro, definido pela
+    identidade visual vigente da DentalPlus, com contraste mínimo mensurável (4,5:1 e 3:1). Temas
+    alternativos passam a exigir especificação aprovada e emenda deste princípio.
+- Modified sections:
+  - Fluxo de Desenvolvimento e Portões de Qualidade, item 4: removida a validação "nos temas pertinentes".
 - Added sections: none
 - Removed sections: none
+- Motivo: decisão do responsável na especificação specs/002-layout-visual-design-2 (FR-012):
+  "não teremos mais tema noturno".
 - Follow-up TODOs:
-  - Sincronizar os portões operacionais de release e os critérios de aceite em
-    specs/001-evoluir-biblioteca-mensagens/spec.md, plan.md e tasks.md
+  - specs/002-layout-visual-design-2/spec.md: marcar a dependência "Emenda da constituição" como atendida.
+  - Plano e tarefas da spec 002: retirar dos portões de verificação os projetos e as auditorias de tema
+    escuro (Playwright desktop-dark e mobile-360-dark, contraste escuro no Lighthouse/axe) junto com a
+    remoção do tema escuro na interface.
+  - Mantido da versão 2.0.0: sincronizar os portões operacionais de release e os critérios de aceite em
+    specs/001-evoluir-biblioteca-mensagens/spec.md, plan.md e tasks.md, se ainda houver divergência.
 -->
 # Mensagens de Atendimento DentalPlus Constitution
 
@@ -60,12 +70,17 @@ Todos os fluxos essenciais MUST funcionar por teclado e em larguras de celular e
 MUST usar semântica HTML adequada ou papéis ARIA completos, apresentar foco visível, nomes
 acessíveis e estados perceptíveis sem depender apenas de cor. Modais MUST gerenciar foco e
 fechamento previsivelmente. Estados de carregamento, vazio, erro, sucesso, confirmação e ação em
-andamento MUST ser explícitos. Alterações de interface MUST reutilizar tokens e padrões visuais do
-produto, manter contraste legível nos temas claro e escuro e evitar deslocamentos ou animações que
-atrapalhem a tarefa.
+andamento MUST ser explícitos. O produto MUST operar em um único tema claro, definido pela
+identidade visual vigente da DentalPlus; tema escuro ou temas alternativos MUST NOT ser oferecidos
+sem especificação aprovada e emenda deste princípio. Alterações de interface MUST reutilizar tokens
+e padrões visuais do produto, garantir contraste mínimo de 4,5:1 para texto comum e de 3:1 para
+texto grande, ícones e contornos de controles, e evitar deslocamentos ou animações que atrapalhem
+a tarefa.
 
 Rationale: o produto é uma ferramenta diária de trabalho e precisa ser rápido, compreensível e
-utilizável por pessoas, dispositivos e métodos de entrada diferentes.
+utilizável por pessoas, dispositivos e métodos de entrada diferentes. Um único tema reforça a
+identidade da marca e reduz o custo de manutenção e de verificação visual; o contraste mínimo
+mensurável garante a legibilidade sem depender da escolha de tema.
 
 ### V. Mudanças Verificáveis e Operação Confiável
 
@@ -109,8 +124,8 @@ dados ou bloqueio do atendimento.
 3. Antes da implementação, o plano de verificação MUST identificar testes automatizados e cenários
    manuais necessários. Correções de bugs MUST incluir teste de regressão quando tecnicamente viável.
 4. Antes do deploy, o responsável MUST executar a suíte automatizada aplicável e validar manualmente
-   os fluxos críticos afetados em desktop e celular, nos temas pertinentes e com teclado quando houver
-   interação. Evidências ou resultados MUST ser registrados na tarefa, revisão ou documento da mudança.
+   os fluxos críticos afetados em desktop e celular e com teclado quando houver interação.
+   Evidências ou resultados MUST ser registrados na tarefa, revisão ou documento da mudança.
 5. Mudanças de produção MUST ser pequenas e reversíveis. Migrações destrutivas, alterações de papel
    ou remoções de dados exigem backup ou estratégia de recuperação e aprovação humana explícita.
 6. Após o deploy, fluxos afetados MUST receber uma verificação rápida no ambiente de produção sem
@@ -135,4 +150,4 @@ sem mudança normativa. A data de ratificação permanece a da primeira adoção
 em toda alteração de conteúdo. A conformidade MUST ser revisada em cada feature e em auditoria geral
 antes de mudanças arquiteturais ou de segurança relevantes.
 
-**Version**: 2.0.0 | **Ratified**: 2026-09-02 | **Last Amended**: 2026-09-09
+**Version**: 3.0.0 | **Ratified**: 2026-09-02 | **Last Amended**: 2026-09-11

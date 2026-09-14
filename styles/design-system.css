@@ -1,0 +1,387 @@
+/* Design 2.0 — fonte única de cores, tipografia, forma e componentes.
+   Contrato: specs/002-layout-visual-design-2/contracts/design-tokens.md
+   Os estilos base ficam sob .dp-app, aplicada ao contêiner raiz a partir da Etapa 1,
+   para que a Etapa 0 entregue tokens e fontes sem mudar nada na tela. */
+
+@font-face {
+  font-family: 'Sora Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400 800;
+  src: url('../vendor/fonts/sora-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Manrope Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url('../vendor/fonts/manrope-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  /* Marca */
+  --dp-navy-900: #0E2350;
+  --dp-navy-800: #16336E;
+  --dp-navy-950: #0B1E45;
+  --dp-cyan-700: #09679F;
+  --dp-cyan-500: #0E93D8;
+  --dp-cyan-400: #29ABE2;
+
+  /* Texto e superfícies */
+  --dp-text: #0E2350;
+  --dp-text-muted: #4A5F8C;
+  --dp-on-brand: #FFFFFF;
+  --dp-on-brand-muted: #BFD3EE;
+  --dp-bg: #F4F7FC;
+  --dp-surface: #FFFFFF;
+  --dp-surface-soft: #F4F9FE;
+  --dp-divider: #DCE5F3;
+  --dp-divider-soft: #EEF3FA;
+
+  /* Contornos e ícones: mínimo de 3:1 sobre --dp-surface (R9) */
+  --dp-control-border: #7488B0;
+  --dp-star-off: #7488B0;
+
+  /* Estados */
+  --dp-highlight-bg: #E6F4FC;
+  --dp-highlight-ink: #0B5C8A;
+  --dp-danger-ink: #B82D2D;
+  --dp-danger-bg: #FBF1F1;
+  --dp-danger-border: #E3C2C2;
+  --dp-success-ink: #107A52;
+
+  /* Tipografia */
+  --dp-font-display: 'Sora Variable', 'Manrope Variable', system-ui, sans-serif;
+  --dp-font-body: 'Manrope Variable', system-ui, sans-serif;
+
+  /* Forma e elevação */
+  --dp-radius-sm: 9px;
+  --dp-radius-md: 12px;
+  --dp-radius-lg: 14px;
+  --dp-radius-xl: 16px;
+  --dp-radius-2xl: 20px;
+  --dp-radius-pill: 999px;
+  --dp-shadow-card: 0 10px 26px -24px rgba(14, 35, 80, .35);
+  --dp-shadow-panel: 0 14px 34px -26px rgba(14, 35, 80, .45);
+  --dp-shadow-dialog: 0 40px 80px -40px rgba(11, 30, 69, .7);
+  --dp-backdrop: rgba(14, 35, 80, .55);
+  --dp-band-gradient: linear-gradient(115deg, #0E2350 0%, #16336E 48%, #0E93D8 140%);
+}
+
+/* ---------- Base (Etapa 1 em diante) ---------- */
+
+.dp-app {
+  background: var(--dp-bg);
+  color: var(--dp-text);
+  font-family: var(--dp-font-body);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.dp-app h1,
+.dp-app h2,
+.dp-app h3 {
+  font-family: var(--dp-font-display);
+  font-weight: 800;
+  letter-spacing: -.4px;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.dp-app :focus-visible {
+  outline: 2px solid var(--dp-cyan-500);
+  outline-offset: 2px;
+}
+
+.dp-app ul.dp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* ---------- Componentes ---------- */
+
+.dp-band {
+  background: var(--dp-navy-800);
+  background-image: var(--dp-band-gradient);
+  color: var(--dp-on-brand);
+  padding: 22px 34px 26px;
+  position: relative;
+  overflow: hidden;
+}
+
+.dp-band__text {
+  position: relative;
+  z-index: 1;
+}
+
+.dp-nav {
+  display: flex;
+  gap: 22px;
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.dp-nav button {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--dp-on-brand-muted);
+  font: inherit;
+  padding: 0 0 3px;
+}
+
+.dp-nav button[aria-current='page'] {
+  border-bottom-color: var(--dp-cyan-400);
+  color: var(--dp-on-brand);
+}
+
+.dp-pill {
+  background: var(--dp-surface);
+  border: 1px solid var(--dp-divider);
+  border-radius: var(--dp-radius-pill);
+  color: var(--dp-text-muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 9px 15px;
+  white-space: nowrap;
+}
+
+.dp-pill[aria-pressed='true'] {
+  background: var(--dp-navy-800);
+  border-color: var(--dp-navy-800);
+  color: var(--dp-on-brand);
+  font-weight: 800;
+}
+
+.dp-btn-primary,
+.dp-btn-accent,
+.dp-btn-secondary,
+.dp-btn-ghost,
+.dp-btn-danger {
+  align-items: center;
+  border-radius: var(--dp-radius-md);
+  display: inline-flex;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 800;
+  gap: 8px;
+  padding: 12px 18px;
+  white-space: nowrap;
+}
+
+.dp-btn-primary {
+  background: var(--dp-navy-800);
+  border: 0;
+  color: var(--dp-on-brand);
+}
+
+/* Ciano escuro: branco sobre #0E93D8 tem apenas 3,4:1 (R9) */
+.dp-btn-accent {
+  background: var(--dp-cyan-700);
+  border: 0;
+  color: var(--dp-on-brand);
+}
+
+.dp-btn-secondary {
+  background: var(--dp-surface);
+  border: 1px solid var(--dp-control-border);
+  color: var(--dp-navy-800);
+  font-weight: 700;
+}
+
+.dp-btn-ghost {
+  background: transparent;
+  border: 0;
+  color: var(--dp-cyan-700);
+  font-weight: 700;
+}
+
+.dp-btn-danger {
+  background: var(--dp-danger-bg);
+  border: 1px solid var(--dp-danger-border);
+  color: var(--dp-danger-ink);
+  font-weight: 700;
+}
+
+.dp-btn-icon {
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--dp-control-border);
+  border-radius: var(--dp-radius-sm);
+  color: var(--dp-text-muted);
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 30px;
+  justify-content: center;
+  padding: 0;
+  width: 30px;
+}
+
+.dp-field {
+  background: var(--dp-surface-soft);
+  border: 1px solid var(--dp-control-border);
+  border-radius: var(--dp-radius-md);
+  color: var(--dp-text);
+  font: inherit;
+  font-size: 14px;
+  padding: 12px 13px;
+  width: 100%;
+}
+
+.dp-field::placeholder {
+  color: var(--dp-text-muted);
+  opacity: 1;
+}
+
+.dp-field:focus-visible {
+  border-color: var(--dp-cyan-500);
+}
+
+.dp-list-item {
+  align-items: center;
+  background: var(--dp-surface);
+  border: 1px solid transparent;
+  border-left: 4px solid transparent;
+  border-radius: var(--dp-radius-lg);
+  box-shadow: var(--dp-shadow-card);
+  display: flex;
+  font: inherit;
+  gap: 14px;
+  padding: 15px 17px;
+  text-align: left;
+  width: 100%;
+}
+
+.dp-list-item[aria-current='true'] {
+  border-color: var(--dp-cyan-700);
+  border-left-color: var(--dp-cyan-700);
+  box-shadow: var(--dp-shadow-panel);
+}
+
+.dp-reading,
+.dp-panel {
+  background: var(--dp-surface);
+  border-radius: var(--dp-radius-xl);
+  box-shadow: var(--dp-shadow-panel);
+  padding: 22px;
+}
+
+.dp-reading__text {
+  background: var(--dp-surface-soft);
+  border: 1px solid var(--dp-divider);
+  border-radius: var(--dp-radius-md);
+  line-height: 1.65;
+  padding: 16px 17px;
+  white-space: pre-line;
+}
+
+.dp-table {
+  border-collapse: collapse;
+  font-size: 14px;
+  width: 100%;
+}
+
+.dp-table th {
+  border-bottom: 1px solid var(--dp-divider);
+  color: var(--dp-text-muted);
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  padding: 14px 0 12px;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.dp-table td {
+  border-bottom: 1px solid var(--dp-divider-soft);
+  padding: 15px 0;
+}
+
+.dp-dialog {
+  background: var(--dp-surface);
+  border-radius: var(--dp-radius-2xl);
+  box-shadow: var(--dp-shadow-dialog);
+  overflow: hidden;
+}
+
+.dp-dialog__header {
+  background: var(--dp-navy-800);
+  background-image: var(--dp-band-gradient);
+  color: var(--dp-on-brand);
+  padding: 20px 24px;
+}
+
+.dp-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px 24px 24px;
+}
+
+.dp-dialog__actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.dp-chip {
+  background: var(--dp-divider-soft);
+  border-radius: var(--dp-radius-pill);
+  color: var(--dp-text-muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 4px 10px;
+}
+
+.dp-highlight {
+  background: var(--dp-highlight-bg);
+  border-radius: 5px;
+  color: var(--dp-highlight-ink);
+  font-weight: 700;
+  padding: 1px 5px;
+}
+
+.dp-kicker {
+  color: var(--dp-cyan-700);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .9px;
+  text-transform: uppercase;
+}
+
+.dp-star {
+  background: transparent;
+  border: 0;
+  color: var(--dp-star-off);
+  font-size: 17px;
+  line-height: 1;
+  padding: 0;
+}
+
+.dp-star[aria-pressed='true'] {
+  color: var(--dp-cyan-700);
+}
+
+.dp-ok {
+  color: var(--dp-success-ink);
+  font-weight: 800;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dp-app *,
+  .dp-app *::before,
+  .dp-app *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}

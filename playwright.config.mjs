@@ -10,6 +10,9 @@ export default defineConfig({
   retries: 0,
   reporter: [['list'], ['html', { outputFolder: 'playwright-report', open: 'never' }]],
   outputDir: 'test-results',
+  expect: {
+    toHaveScreenshot: { maxDiffPixelRatio: 0.01, animations: 'disabled', caret: 'hide' },
+  },
   use: {
     baseURL: LOCAL_APP_URL,
     serviceWorkers: 'block',
@@ -30,10 +33,6 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'], colorScheme: 'light' },
     },
     {
-      name: 'desktop-dark',
-      use: { ...devices['Desktop Chrome'], colorScheme: 'dark' },
-    },
-    {
       name: 'mobile-360-light',
       use: {
         ...devices['Desktop Chrome'],
@@ -41,16 +40,6 @@ export default defineConfig({
         hasTouch: true,
         isMobile: true,
         colorScheme: 'light',
-      },
-    },
-    {
-      name: 'mobile-360-dark',
-      use: {
-        ...devices['Desktop Chrome'],
-        viewport: { width: 360, height: 800 },
-        hasTouch: true,
-        isMobile: true,
-        colorScheme: 'dark',
       },
     },
   ],
