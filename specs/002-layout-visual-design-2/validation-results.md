@@ -292,9 +292,36 @@ Desempenho não foi medido nesta etapa.
 - No celular, a situação espremia o título da lista de "Suas solicitações"; agora desce para a linha de baixo.
 - Localizadores de teste que dependiam da primeira mensagem da lista ou do botão "Aprovar" por trecho do nome.
 
-### Pendente de autorização
+### Ensaio com backup de produção (T065) — 2026-09-14, autorizado pelo responsável
 
-- T065: ensaio com backup **novo** de produção (quickstart, "Etapas com banco").
-- T066: `db push --linked --dry-run`, revisão e `db push --linked` em produção, com regras exatas no
-  `.claude/settings.local.json`. A migração é aditiva e mantém a chamada antiga de aprovação, então pode ir ao banco
-  antes da publicação do frontend.
+- Backup lógico novo de produção (`supabase db dump --linked`: papéis, estrutura e dados) na pasta de backups fora do
+  repositório, com assinaturas SHA-256 e contagem de linhas no `LEIA-ME.md` da pasta `2026-09-14_1430`.
+- Histórico de migrações da produção igual ao repositório até `20260904170254`; só a migração da Etapa 5 pendente.
+- Ensaio no banco **local**: `db reset --no-seed --version 20260904170254`, carga dos dados (sem os blocos do Storage),
+  retrato antes, `migration up`, retrato depois.
+
+| Conferência | Resultado |
+|---|---|
+| Contagens das 9 tabelas públicas (profiles 5, acessos 5, vínculos 5, categorias 17, mensagens 68, favoritos 19, recentes 78, atividades 7, solicitações 29) | idênticas antes e depois |
+| Assinatura (md5) das mensagens e dos campos originais das solicitações | idênticas antes e depois |
+| Visibilidade por conta (mensagens, solicitações e categorias vistas por cada um dos 5 perfis) | idêntica antes e depois |
+| Backfill | 22 aprovadas de criação/edição com versão publicada igual à proposta; 6 rejeitadas com o motivo copiado para o comentário; nenhuma marcada como ajustada |
+| Regras `NOT VALID` | textos e comentário obrigatório das rejeitadas aceitam todas as linhas; "versão publicada completa" é violada pelas 22 aprovadas antigas (30/07 a 02/09), que não têm `categoria_id` porque são anteriores à coluna — a proposta também não tem; nome da categoria, título e conteúdo publicados estão preenchidos. É o caso previsto para a regra ficar `NOT VALID`; a migração não foi alterada. |
+| Funções | `aprovar_solicitacao(p_id, p_ajustes, p_comentario)` e `rejeitar_solicitacao(p_id, p_motivo)` presentes |
+
+A cópia de produção foi apagada do banco local e do contêiner; o banco local foi recriado com o seed (`test:db` 107 de
+107).
+
+### Migração em produção (T066, parte do banco) — 2026-09-14, autorizada pelo responsável
+
+- `npx supabase db push --linked --dry-run`: listou somente `20260914120000_request_review_adjustments.sql`, sem seeds
+  nem papéis.
+- `npx supabase db push --linked --yes`: aplicada sem erro.
+- `npx supabase migration list --linked`: histórico da produção igual ao repositório (7 de 7).
+- A migração é compatível com o site que está no ar (a aprovação só com `p_id` continua válida e a rejeição manteve a
+  assinatura), por isso foi aplicada antes da publicação do frontend.
+
+### Pendente
+
+- Restante da T066: prévia do ramo com as etapas 1 a 5, aprovação do responsável, integração ao `main`, verificação em
+  produção e remoção das regras de produção do `.claude/settings.local.json` (feita pelo responsável).
