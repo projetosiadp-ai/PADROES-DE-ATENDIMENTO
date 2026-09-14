@@ -1,4 +1,4 @@
-﻿import AxeBuilder from '@axe-core/playwright';
+import AxeBuilder from '@axe-core/playwright';
 import { test, expect } from '@playwright/test';
 
 import { dismissReleaseNotice, LOCAL_ACCOUNTS, LOCAL_SUPABASE_URL, loginAs, openLibrary } from '../fixtures/auth.mjs';

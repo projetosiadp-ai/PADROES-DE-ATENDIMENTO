@@ -1,4 +1,4 @@
-﻿---
+---
 
 description: "Task list for feature 002 — Nova identidade visual DentalPlus (Design 2.0)"
 ---
@@ -157,16 +157,16 @@ correspondente (ramo → prévia na Vercel → aprovação do responsável → `
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T047 [P] [US4] Criar `tests/variables.test.mjs` para `domain/variables.mjs`: reconhece `[NOME]`, `[DATA_VENCIMENTO]`, `[ENDEREÇO]`; ignora `[ver anexo]`; um campo por variável repetida na ordem de aparição; rótulo "Data vencimento"; preenchimento substitui todas as ocorrências e mantém as vazias; contagem de preenchidas e vazias
-- [ ] T048 [P] [US4] Acrescentar em `supabase/seed.sql` e `tests/fixtures/data.mjs` uma mensagem de teste com `[NOME]` duas vezes e `[DATA]` uma vez no acesso do colaborador de teste
-- [ ] T049 [P] [US4] Criar `tests/e2e/variables.spec.mjs`: preencher, "Copiar preenchida", ler a área de transferência (permissão `clipboard-read`), conferir substituição e aviso de vazias, "Texto original" intacto e valores descartados ao trocar de mensagem
+- [X] T047 [P] [US4] Criar `tests/variables.test.mjs` para `domain/variables.mjs`: reconhece `[NOME]`, `[DATA_VENCIMENTO]`, `[ENDEREÇO]`; ignora `[ver anexo]`; um campo por variável repetida na ordem de aparição; rótulo "Data vencimento"; preenchimento substitui todas as ocorrências e mantém as vazias; contagem de preenchidas e vazias
+- [X] T048 [P] [US4] Acrescentar em `supabase/seed.sql` e `tests/fixtures/data.mjs` uma mensagem de teste com `[NOME]` duas vezes e `[DATA]` uma vez no acesso do colaborador de teste
+- [X] T049 [P] [US4] Criar `tests/e2e/variables.spec.mjs`: preencher, "Copiar preenchida", ler a área de transferência (permissão `clipboard-read`), conferir substituição e aviso de vazias, "Texto original" intacto e valores descartados ao trocar de mensagem
 
 ### Implementation for User Story 4
 
-- [ ] T050 [P] [US4] Criar `domain/variables.mjs` com `extractVariables(content)`, `variableLabel(name)` e `fillVariables(content, values)` usando `/\[([\p{Lu}\p{N}_]+)\]/gu`
-- [ ] T051 [US4] Em `app.js`, criar o estado em memória `variableValues` limpo ao trocar `selectedMessageId`, fechar a janela "Visualizar" e em `logout()`; estender `copyMessage(msg, text = msg.conteudo)` para copiar o texto informado mantendo o mesmo registro de uso
-- [ ] T052 [US4] Em `views/library-view.mjs` (painel de leitura) e `views/modal-view.mjs` (janela "Visualizar"), renderizar um campo por variável, o texto com variáveis e valores em `dp-highlight`, "Copiar preenchida", "Texto original" e o estado "N variáveis preenchidas · M sem preencher"
-- [ ] T053 [US4] Em `views/modal-view.mjs` e `app.js`, acrescentar às janelas de solicitar e editar os botões "Inserir variável" `[NOME]`, `[DATA]` e `[VALOR]`, inserindo na posição do cursor do conteúdo
+- [X] T050 [P] [US4] Criar `domain/variables.mjs` com `extractVariables(content)`, `variableLabel(name)` e `fillVariables(content, values)` usando `/\[([\p{Lu}\p{N}_]+)\]/gu`
+- [X] T051 [US4] Em `app.js`, criar o estado em memória `variableValues` limpo ao trocar `selectedMessageId`, fechar a janela "Visualizar" e em `logout()`; estender `copyMessage(msg, text = msg.conteudo)` para copiar o texto informado mantendo o mesmo registro de uso
+- [X] T052 [US4] Em `views/library-view.mjs` (painel de leitura) e `views/modal-view.mjs` (janela "Visualizar"), renderizar um campo por variável, o texto com variáveis e valores em `dp-highlight`, "Copiar preenchida", "Texto original" e o estado "N variáveis preenchidas · M sem preencher"
+- [X] T053 [US4] Em `views/modal-view.mjs` e `app.js`, acrescentar às janelas de solicitar e editar os botões "Inserir variável" `[NOME]`, `[DATA]` e `[VALOR]`, inserindo na posição do cursor do conteúdo
 - [ ] T054 [US4] Acrescentar foto de mensagem com variáveis em `tests/e2e/visual.spec.mjs`, atualizar `domain/release-notes.mjs` para a Etapa 4, verificação local completa e publicação da Etapa 4 (incluindo a US7 se estiver concluída)
 
 **Checkpoint**: variáveis em produção, sem mudança de banco
@@ -235,13 +235,13 @@ correspondente (ramo → prévia na Vercel → aprovação do responsável → `
 
 ### Tests for User Story 7 ⚠️
 
-- [ ] T077 [P] [US7] Criar `tests/e2e/keyboard.spec.mjs`: ↓ ↓ Enter copia a terceira mensagem; E abre "Solicitar edição" (colaborador) e "Editar" (superadmin); setas e E sem efeito com foco na busca ou com diálogo aberto
-- [ ] T078 [P] [US7] Estender `tests/modal-view.test.mjs`: campos de título e conteúdo com `maxlength` 100/2000 e contador "N / limite caracteres" ligado por `aria-describedby`
+- [X] T077 [P] [US7] Criar `tests/e2e/keyboard.spec.mjs`: ↓ ↓ Enter copia a terceira mensagem; E abre "Solicitar edição" (colaborador) e "Editar" (superadmin); setas e E sem efeito com foco na busca ou com diálogo aberto
+- [X] T078 [P] [US7] Estender `tests/modal-view.test.mjs`: campos de título e conteúdo com `maxlength` 100/2000 e contador "N / limite caracteres" ligado por `aria-describedby`
 
 ### Implementation for User Story 7
 
-- [ ] T079 [US7] No manipulador global de teclado de `app.js` (o mesmo do Ctrl K), tratar ↑/↓ (mover seleção e foco), Enter (copiar a selecionada) e E (abrir sugestão ou edição) somente com a Biblioteca visível, sem diálogo ativo e sem foco em `input`, `textarea`, `select` ou área editável; renderizar a dica "↑ ↓ navegar · ⏎ copiar · E solicitar edição" em `views/library-view.mjs`
-- [ ] T080 [US7] Em `views/modal-view.mjs`, acrescentar os contadores de título e conteúdo com anúncio para leitores de tela só em 90% e 100% do limite
+- [X] T079 [US7] No manipulador global de teclado de `app.js` (o mesmo do Ctrl K), tratar ↑/↓ (mover seleção e foco), Enter (copiar a selecionada) e E (abrir sugestão ou edição) somente com a Biblioteca visível, sem diálogo ativo e sem foco em `input`, `textarea`, `select` ou área editável; renderizar a dica "↑ ↓ navegar · ⏎ copiar · E solicitar edição" em `views/library-view.mjs`
+- [X] T080 [US7] Em `views/modal-view.mjs`, acrescentar os contadores de título e conteúdo com anúncio para leitores de tela só em 90% e 100% do limite
 - [ ] T081 [US7] Incluir a dica de atalhos nas notas da etapa em `domain/release-notes.mjs` e publicar junto com a Etapa 4 ou em publicação própria (ramo, prévia, aprovação, `main`)
 
 **Checkpoint**: todas as histórias concluídas

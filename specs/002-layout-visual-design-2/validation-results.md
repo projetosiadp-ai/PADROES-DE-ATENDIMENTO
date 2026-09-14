@@ -1,4 +1,4 @@
-﻿# Resultados de validação — Design 2.0
+# Resultados de validação — Design 2.0
 
 ## Etapa 0 (preparação) — 2026-09-14
 
@@ -185,3 +185,54 @@ Pendente de aprovação do responsável (prévia do ramo `002-etapa-2-janelas`).
 ### Publicação
 
 Pendente de aprovação do responsável (prévia do ramo `002-etapa-3-administracao`, sem gravar dados).
+
+## Etapa 4 (variáveis, atalhos e contadores, com a US7) — 2026-09-14
+
+### Testes automatizados (T054, verificação local)
+
+| Suíte | Resultado |
+|---|---|
+| `npm run test:unit` | 96 de 96 (novos: `tests/variables.test.mjs` e contadores/atalhos em `tests/modal-view.test.mjs`) |
+| `npm run test:e2e` | 38 de 38 — 37 na bateria e 1 (criar acesso e categoria) na repetição isolada, em 18,7 s |
+| `npm run test:a11y` | 9 de 9 |
+| `npm run test:visual` | 29 de 29, e 29 de 29 na conferência seguinte |
+| `npm run test:perf` | dentro dos limites nas duas execuções |
+
+Cenários novos: `tests/e2e/variables.spec.mjs` (preencher, copiar preenchida e original, valores descartados e fora do
+armazenamento do navegador, inserir variável no cursor) e `tests/e2e/keyboard.spec.mjs` (↓ ↓ Enter, ↑, E por papel,
+atalhos inativos com foco na busca e com janela aberta).
+
+### Desempenho
+
+| Medida | Etapa 1 (mediana) | Etapa 4 (mediana de 10 amostras) | Limite | Situação |
+|---|---|---|---|---|
+| Carga da Biblioteca em 3G | ~1.575 ms | ~1.616 ms | p75 ≤ 2.000 ms | dentro (p75 1.676 e 1.619 ms) |
+| Busca | ~173 ms | ~172 ms | p95 ≤ 500 ms | dentro |
+| Confirmação de cópia | ~205 ms | ~171 ms | p95 ≤ 1.000 ms | dentro |
+| Transferência por recarga | ~41.450 B | ~41.150 B | 512 KB | dentro |
+
+A carga está 2,6% acima da Etapa 1 e cerca de 12,6% acima da linha de base anterior à Etapa 0 (~1.435 ms), acima da
+referência de "até 10% de piora" do SC-004, embora dentro do limite absoluto de 2.000 ms. A variação da máquina de
+medição é da mesma ordem (amostras isoladas de 1.542 a 2.094 ms); convém repetir a medição em outro equipamento antes da
+publicação. O Lighthouse não foi repetido nesta etapa.
+
+### Defeitos encontrados e corrigidos na verificação
+
+- "Copiar preenchida" copiava o texto original: o atalho interno de cópia descartava o texto preenchido.
+- O grupo de atalhos se chamava "Inserir variável no conteúdo" e era encontrado junto com o campo "Conteúdo" por quem
+  procura o campo pelo nome; passou a se chamar "Atalhos de variável".
+- 18 arquivos tinham ganhado marca de ordem de bytes (BOM) nas edições feitas por PowerShell; foram regravados em UTF-8
+  sem BOM.
+
+### Decisões
+
+- A mensagem de teste com variáveis está em `supabase/seed.sql` (só o banco local) e é garantida por
+  `tests/fixtures/variables.mjs`, porque `supabase db reset` falha nesta máquina.
+- Atalhos só no computador (≥ 900 px) e só com o foco na página ou num item da lista: Enter sobre outro botão continua
+  ativando esse botão. Enter copia a versão preenchida quando a mensagem tem variáveis.
+- Contadores: o texto visível muda a cada tecla, mas o aviso ao leitor de tela só aparece a 90% e 100% do limite.
+- Com variáveis vazias, "Copiar preenchida" mantém os colchetes e o estado mostra quantas ficaram sem preencher.
+
+### Publicação
+
+Pendente de aprovação do responsável (prévia do ramo `002-etapa-4-variaveis`).

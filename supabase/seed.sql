@@ -162,6 +162,19 @@ values
     '10000000-0000-4000-8000-000000000003',
     '2026-09-02T12:00:00Z',
     '2026-09-02T12:00:00Z'
+  ),
+  (
+    '40000000-0000-4000-8000-000000000004',
+    '20000000-0000-4000-8000-000000000001',
+    '30000000-0000-4000-8000-000000000001',
+    'Boas-vindas',
+    'Confirmação com variáveis',
+    'Olá, [NOME]! Sua consulta está confirmada para [DATA]. Qualquer dúvida, [NOME], estamos à disposição.',
+    array['variaveis', 'local'],
+    0,
+    '10000000-0000-4000-8000-000000000003',
+    '2026-09-02T12:00:00Z',
+    '2026-09-02T12:00:00Z'
   );
 
 insert into public.favoritos (user_id, mensagem_id, created_at)

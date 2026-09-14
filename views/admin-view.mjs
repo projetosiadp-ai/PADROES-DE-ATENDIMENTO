@@ -1,4 +1,4 @@
-﻿const escapeHtml = (value) => String(value ?? '')
+const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;')

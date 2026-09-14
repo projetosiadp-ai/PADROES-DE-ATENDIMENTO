@@ -1,4 +1,4 @@
-﻿// app.js
+// app.js
 import * as api from './api.js';
 import { matchesSearch, titleSegments as titleSegmentsPure, pickActiveAcesso } from './search-utils.mjs';
 import { normalizeTags, paginateLibraryMessages, selectLibraryMessages } from './domain/library.mjs';
@@ -6,13 +6,14 @@ import { canPublishContent, canUseAccess, canViewAdministration } from './domain
 import { getOrCreateIdempotencyKey, isArchiveRequest, requestTypeLabel } from './domain/requests.mjs';
 import { resolveErrorPolicy } from './domain/error-policy.mjs';
 import { greetingFor } from './domain/greeting.mjs';
+import { extractVariables, fillVariables, insertAtCursor, variableLabel, variableSegments, variablesStatus } from './domain/variables.mjs';
 import { CURRENT_RELEASE, RELEASE_NOTES } from './domain/release-notes.mjs';
 import { copyExactText } from './ui/clipboard.mjs';
 import { morphChildren } from './ui/dom-morph.mjs';
 import { activateDialogFocus } from './ui/focus.mjs';
 import { ICONS } from './ui/icons.mjs';
 import { DEFAULT_ACCESS_COLOR } from './domain/access-defaults.mjs';
-import { renderLibraryOverview, renderLibraryReadingDialog, renderLibraryView } from './views/library-view.mjs';
+import { renderLibraryOverview, renderLibraryReadingDialog, renderLibraryView, variablesBlock } from './views/library-view.mjs';
 import { renderBrandBand, renderCategoryPills, renderLoginView, renderNoAccessView, renderReleaseNotesDialog } from './views/shell-view.mjs';
 import { renderAdminConfirmationModal, renderDialog, renderMessageEditorModal, renderMessageRequestModal, renderStructuralModals } from './views/modal-view.mjs';
 import { renderAdminView } from './views/admin-view.mjs';
@@ -31,6 +32,7 @@ const CLOSED_ACCESS_USERS = Object.freeze({
   open: false, accessId: null, loading: false, saving: false, users: Object.freeze([]),
   profiles: Object.freeze([]), selectedId: '', error: '',
 });
+const EMPTY_VARIABLES = Object.freeze({ messageId: null, values: Object.freeze({}) });
 const EMPTY_MSG_FORM = Object.freeze({ categoryId: '', title: '', tagInput: '', tags: Object.freeze([]), content: '' });
 
 // Earlier builds persisted whole libraries in sessionStorage. Content now lives only in memory.
@@ -75,6 +77,8 @@ class App {
       categoryFilter: null,
       favoritesOnly: false,
       selectedMessageId: null,
+      // Valores digitados nas variáveis da mensagem em leitura: só em memória, nunca gravados (FR-019).
+      variableValues: EMPTY_VARIABLES,
       userMenuOpen: false,
       showPasswordHelp: false,
       releaseNoticeSeen: CURRENT_RELEASE,
@@ -271,7 +275,8 @@ class App {
         else if (e.key === 'Escape') { e.preventDefault(); this.setState({ paletteOpen: false }); }
         return;
       }
-      const typing = /INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || '');
+      const typing = /INPUT|TEXTAREA|SELECT/.test((e.target && e.target.tagName) || '') || Boolean(e.target?.isContentEditable);
+      if (!typing && !this._activeDialog && this.handleLibraryShortcut(e)) return;
       if (e.key === '/' && !typing && st.currentUser && !this._activeDialog) {
         e.preventDefault();
         if (this.searchEl) this.searchEl.focus();
@@ -461,7 +466,7 @@ class App {
     if (!currentUser || accessId === this.state.activeAcessoId) return;
     const refreshSequence = ++this._refreshSequence;
     try { localStorage.setItem('dp_active_acesso', accessId); } catch (e) {}
-    this.setState({ activeAcessoId: accessId, categoryFilter: null, libraryVisibleLimit: 30, loading: true });
+    this.setState({ activeAcessoId: accessId, categoryFilter: null, libraryVisibleLimit: 30, loading: true, selectedMessageId: null, variableValues: EMPTY_VARIABLES });
     try {
       const library = await this.fetchLibrary(accessId);
       if (refreshSequence !== this._refreshSequence) return;
@@ -547,9 +552,10 @@ class App {
     const activeAcesso = this.activeAccess();
     return activeAcesso ? this.state.mensagens.filter(m => m.acesso_id === activeAcesso.id) : [];
   }
-  async copyMessage(msg) {
+  // A cópia preenchida e o texto original registram o mesmo uso da mensagem (FR-018).
+  async copyMessage(msg, text = msg.conteudo) {
     const profile = this.state.currentUser.profile;
-    const result = await copyExactText(msg.conteudo, {
+    const result = await copyExactText(text, {
       telemetry: () => api.recordMessageUse(profile.id, msg.id).then(() => {
         this.setState(s => ({
           mensagens: s.mensagens.map(m => m.id === msg.id ? { ...m, frequencia: m.frequencia + 1 } : m),
@@ -603,7 +609,66 @@ class App {
 
   // Selecionar apenas mostra a mensagem no painel de leitura; copiar é ação explícita (FR-007).
   selectMessage(messageId) {
-    this.setState({ selectedMessageId: messageId, userMenuOpen: false });
+    this.setState({ selectedMessageId: messageId, userMenuOpen: false, variableValues: EMPTY_VARIABLES });
+  }
+
+  setVariableValue(messageId, name, value) {
+    this.setState(s => ({
+      variableValues: {
+        messageId,
+        values: { ...(s.variableValues.messageId === messageId ? s.variableValues.values : {}), [name]: value },
+      },
+    }));
+  }
+
+  // "Inserir variável" (FR-020): usa a posição do cursor do conteúdo e devolve o foco logo depois
+  // do marcador. Inserção que ultrapassaria 2000 caracteres não acontece.
+  insertVariable(event, apply) {
+    const button = event.target.closest('[data-insert-variable]');
+    const textarea = button?.closest('[aria-modal="true"]')?.querySelector('textarea[data-variable-target]');
+    if (!button || !textarea) return;
+    const { text, caret } = insertAtCursor(textarea.value, button.dataset.insertVariable, textarea.selectionStart, textarea.selectionEnd);
+    if (text.length > 2000) {
+      this.showToast('O conteúdo já está no limite de 2000 caracteres.', 'error');
+      return;
+    }
+    apply(text);
+    textarea.focus();
+    textarea.setSelectionRange(caret, caret);
+  }
+  /* Atalhos da Biblioteca (FR-021): ↑/↓ movem a seleção e o foco, Enter copia a selecionada e E
+   * abre a sugestão de edição (ou a edição). Só valem no computador, com a Biblioteca visível,
+   * sem janela aberta e sem foco em campo editável; Enter e setas também exigem que o foco não
+   * esteja em outro botão, para não sequestrar a ativação dele. */
+  handleLibraryShortcut(event) {
+    const nav = this._libraryNav;
+    if (!nav || event.ctrlKey || event.metaKey || event.altKey || this.state.viewportWidth < 900) return false;
+    const active = document.activeElement;
+    const onItem = Boolean(active?.matches?.('[data-testid^="message-item-"]'));
+    const neutral = !active || active === document.body || active === this.root || onItem;
+
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && neutral && nav.ids.length) {
+      event.preventDefault();
+      const current = nav.ids.indexOf(nav.selectedId);
+      const next = event.key === 'ArrowDown'
+        ? Math.min(nav.ids.length - 1, current + 1)
+        : Math.max(0, current - 1);
+      const nextId = nav.ids[next];
+      if (nextId !== nav.selectedId) this.selectMessage(nextId);
+      this.root.querySelector(`[data-testid="message-item-${nextId}"]`)?.focus();
+      return true;
+    }
+    if (event.key === 'Enter' && neutral && nav.selectedId) {
+      event.preventDefault();
+      nav.copy();
+      return true;
+    }
+    if ((event.key === 'e' || event.key === 'E') && nav.selectedId) {
+      event.preventDefault();
+      nav.edit();
+      return true;
+    }
+    return false;
   }
 
   readingIsDialog() {
@@ -638,6 +703,7 @@ class App {
 
   renderVals() {
     const st = this.state;
+    this._libraryNav = null;
     const session = st.currentUser;
 
     if (st.loading) return { isLogin: false, isApp: false, isLoading: true, toasts: st.toasts };
@@ -678,7 +744,7 @@ class App {
     const categoryName = (m) => categoryNames.get(m.categoria_id) ?? m.categoria ?? '';
     const accessOptions = this.usableAccesses();
 
-    const copyMessage = (msg) => this.copyMessage(msg);
+    const copyMessage = (msg, text) => this.copyMessage(msg, text);
     const toggleFav = (id) => {
       const isFav = st.favoriteIds.includes(id);
       api.toggleFavorite(profile.id, id, isFav)
@@ -689,6 +755,24 @@ class App {
     };
     const openPreview = (msg) => this.setState({ showPreviewModal: true, previewingMsgId: msg.id });
 
+    // Etapa 4: um campo por variável distinta; valores só valem para a mensagem em que foram digitados.
+    const variablesFor = (m) => {
+      const names = extractVariables(m.conteudo);
+      if (!names.length) return null;
+      const values = st.variableValues.messageId === m.id ? st.variableValues.values : {};
+      const fill = fillVariables(m.conteudo, values);
+      return {
+        fields: names.map(name => ({
+          name, label: variableLabel(name), value: values[name] ?? '',
+          onInput: (event) => this.setVariableValue(m.id, name, event.target.value),
+        })),
+        segments: variableSegments(m.conteudo, values),
+        status: variablesStatus(fill),
+        hasEmpty: fill.empty > 0,
+        onCopyFilled: () => copyMessage(m, fill.text),
+        onCopyOriginal: () => copyMessage(m),
+      };
+    };
     const usageLabel = (frequencia) => `usada ${frequencia}${frequencia === 1 ? ' vez' : ' vezes'}`;
     const buildListItem = (m) => {
       const tagsLabel = m.tags.length ? ` · ${m.tags.map(tag => `#${tag}`).join(' ')}` : '';
@@ -706,6 +790,7 @@ class App {
       categoria: categoryName(m),
       titulo: m.titulo,
       conteudo: m.conteudo,
+      variables: variablesFor(m),
       tagChips: m.tags.map(tag => ({ label: tag, onClick: () => this.setState({ searchQuery: tag, searchQueryDraft: tag }) })),
       usageLabel: usageLabel(m.frequencia),
       isFav: st.favoriteIds.includes(m.id),
@@ -830,6 +915,19 @@ class App {
     const appView = (st.appView === 'admin' && !isSuperAdmin) ? 'biblioteca' : (st.appView || 'biblioteca');
     const pageTitles = { biblioteca: 'Biblioteca de mensagens', visaogeral: 'Visão geral', admin: 'Administração' };
     const favoritesCount = acessoMsgs.filter(m => st.favoriteIds.includes(m.id)).length;
+    // Estado lido pelos atalhos de teclado da Biblioteca (handleLibraryShortcut).
+    if (appView === 'biblioteca') {
+      this._libraryNav = {
+        ids: libraryPage.items.map(m => m.id),
+        selectedId: effectiveSelectedId,
+        copy: () => {
+          if (!selectedMessage) return;
+          const variables = variablesFor(selectedMessage);
+          if (variables) variables.onCopyFilled(); else copyMessage(selectedMessage);
+        },
+        edit: () => { if (selectedMessage) this.openEditMsg(selectedMessage); },
+      };
+    }
     const adminTab = st.adminTab || 'mensagens';
     const selectedRequest = this.selectedRequest();
     const previewing = acessoMsgs.find(x => x.id === st.previewingMsgId);
@@ -958,6 +1056,7 @@ class App {
       messageList: libraryPage.items.map(buildListItem),
       reading: selectedMessage ? buildReading(selectedMessage) : null,
       showReadingPanel: !isNarrow,
+      shortcutHint: isNarrow ? '' : `↑ ↓ navegar · ⏎ copiar · E ${canPublish ? 'editar' : 'solicitar edição'}`,
       readingAsDialog: isNarrow && Boolean(chosen) && !this.anyModalOpen(),
       onCloseReading: () => this.setState({ selectedMessageId: null }),
       hasMoreMessages: libraryPage.hasMore,
@@ -976,11 +1075,12 @@ class App {
       },
 
       showPreviewModal: st.showPreviewModal,
-      closePreview: () => this.setState({ showPreviewModal: false }),
+      closePreview: () => this.setState({ showPreviewModal: false, variableValues: EMPTY_VARIABLES }),
       previewingMsg: previewing ? {
         titulo: previewing.titulo, categoria: categoryName(previewing),
         usageLabel: usageLabel(previewing.frequencia), copied: st.copiedId === previewing.id,
-        conteudo: previewing.conteudo, onCopy: () => copyMessage(previewing)
+        conteudo: previewing.conteudo, onCopy: () => copyMessage(previewing),
+        variables: variablesFor(previewing),
       } : null,
 
       paletteOpen: st.paletteOpen, paletteQuery: st.paletteQuery, paletteInputRef: (el) => { this.paletteEl = el; if (el && document.activeElement !== el) el.focus(); },
@@ -1022,6 +1122,7 @@ class App {
         onTagKeyDown: (e) => { if (e.key === 'Enter') { e.preventDefault(); this.addMsgTag(); } },
         onAddTag: () => this.addMsgTag(),
         onContentChange: (e) => this.updateMsgForm({ content: e.target.value.slice(0, 2000) }),
+        onInsertVariable: (e) => this.insertVariable(e, content => this.updateMsgForm({ content })),
         onClose: () => this.closeMsgModal(),
         onSubmit: () => this.saveMsg(),
       },
@@ -1040,6 +1141,7 @@ class App {
         onTitleChange: (e) => this.updateMessageRequestForm('title', e.target.value.slice(0, 100)),
         onTagsChange: (e) => this.updateMessageRequestForm('tagsText', e.target.value),
         onContentChange: (e) => this.updateMessageRequestForm('content', e.target.value.slice(0, 2000)),
+        onInsertVariable: (e) => this.insertVariable(e, content => this.updateMessageRequestForm('content', content)),
         onClose: () => this.closeMessageRequest(),
         onSubmit: () => this.submitMessageRequest()
       },
@@ -1854,12 +1956,17 @@ class App {
     // Tela 04: categoria e usos no cabeçalho, título como nome acessível e "Copiar mensagem".
     if (v.showPreviewModal && v.previewingMsg) {
       const m = v.previewingMsg;
+      const variables = variablesBlock(m.variables, H, { idPrefix: 'preview' });
       out += renderDialog({
         name: m.titulo, kicker: `${m.categoria} · ${m.usageLabel}`, size: 'lg', register: H, layer: 100,
         onClose: v.closePreview,
-        body: `<div class="dp-reading__text">${esc(m.conteudo)}</div>`,
+        body: `${variables.fields}<div class="dp-reading__text">${m.variables ? variables.text : esc(m.conteudo)}</div>`,
+        note: m.variables?.status ?? '',
         actions: `<button type="button" class="dp-btn-secondary" data-click="${H(v.closePreview)}">Fechar</button>`
-          + `<button type="button" class="dp-btn-accent" data-click="${H(m.onCopy)}">${m.copied ? ICONS.check : ICONS.clipboard}${m.copied ? 'Copiada' : 'Copiar mensagem'}</button>`,
+          + (m.variables
+            ? `<button type="button" class="dp-btn-secondary" data-click="${H(m.variables.onCopyOriginal)}">Texto original</button>`
+              + `<button type="button" class="dp-btn-accent" data-click="${H(m.variables.onCopyFilled)}">${m.copied ? ICONS.check : ICONS.clipboard}${m.copied ? 'Copiada' : 'Copiar preenchida'}</button>`
+            : `<button type="button" class="dp-btn-accent" data-click="${H(m.onCopy)}">${m.copied ? ICONS.check : ICONS.clipboard}${m.copied ? 'Copiada' : 'Copiar mensagem'}</button>`),
       });
     }
 

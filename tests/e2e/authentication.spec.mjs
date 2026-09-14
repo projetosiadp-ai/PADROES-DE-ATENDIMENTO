@@ -1,4 +1,4 @@
-﻿import { test, expect } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 import { clearBrowserSession, LOCAL_ACCOUNTS, loginAs, openLibrary } from '../fixtures/auth.mjs';
 import { TEST_DATA, TEST_IDS } from '../fixtures/data.mjs';

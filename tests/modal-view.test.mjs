@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
@@ -37,7 +37,8 @@ test('editor de mensagens aponta campos inválidos para a mensagem de erro', () 
     form: { categoryId: 'c1', title: '', tagInput: '', tags: [], content: '' },
     tagChips: [], saving: false, error: 'Preencha título e conteúdo.', invalid: ['title', 'content'],
   }, register);
-  assert.strictEqual([...html.matchAll(/aria-invalid="true" aria-describedby="message-editor-error"/g)].length, 2);
+  assert.match(html, /aria-label="Título"[^>]*aria-invalid="true" aria-describedby="editor-title-counter message-editor-error"/);
+  assert.match(html, /aria-label="Conteúdo"[^>]*aria-invalid="true" aria-describedby="editor-content-counter message-editor-error"/);
   assert.match(html, /id="message-editor-error" role="alert"/);
 });
 
@@ -105,4 +106,45 @@ test('diálogos estruturais ficam ocupados enquanto salvam', () => {
   }, register);
   assert.match(html, /role="dialog"[^>]*aria-busy="true"/);
   assert.ok(buttons(html).every(button => /\bdisabled\b/.test(button)));
+});
+
+
+const requestModel = (overrides = {}) => ({
+  open: true, type: 'criacao', accessibleName: 'Solicitar nova mensagem', categories: [], onClose: noop,
+  form: { categoryId: '', title: '', tagsText: '', content: '' }, saving: false, invalid: [], onInsertVariable: noop,
+  ...overrides,
+});
+
+test('título e conteúdo têm maxlength e contador ligado ao campo', () => {
+  for (const html of [
+    renderMessageRequestModal(requestModel({ form: { categoryId: '', title: 'Olá', tagsText: '', content: 'Texto' } }), register),
+    renderMessageEditorModal({
+      open: true, title: 'Nova mensagem', categories: [], form: { categoryId: '', title: 'Olá', tagInput: '', tags: [], content: 'Texto' },
+      tagChips: [], saving: false, invalid: [], onClose: noop, onInsertVariable: noop,
+    }, register),
+  ]) {
+    const title = html.match(/<input[^>]*aria-label="Título"[^>]*>/)[0];
+    const content = html.match(/<textarea[^>]*aria-label="Conteúdo"[^>]*>/)[0];
+    assert.match(title, /maxlength="100"/);
+    assert.match(content, /maxlength="2000"/);
+    const titleCounter = title.match(/aria-describedby="([^" ]+)/)[1];
+    const contentCounter = content.match(/aria-describedby="([^" ]+)/)[1];
+    assert.match(html, new RegExp(`id="${titleCounter}"[^>]*>3 / 100 caracteres<`));
+    assert.match(html, new RegExp(`id="${contentCounter}"[^>]*>5 / 2000 caracteres<`));
+  }
+});
+
+test('o leitor de tela só é avisado a partir de 90% do limite', () => {
+  const live = (content) => renderMessageRequestModal(requestModel({ form: { categoryId: '', title: '', tagsText: '', content } }), register)
+    .match(/id="request-content-counter"[^>]*>[^<]*<\/span><span class="sr-only" aria-live="polite">([^<]*)</)[1];
+  assert.equal(live('a'.repeat(1799)), '');
+  assert.equal(live('a'.repeat(1800)), 'Conteúdo: perto do limite de 2000 caracteres.');
+  assert.equal(live('a'.repeat(2000)), 'Conteúdo: limite de 2000 caracteres atingido.');
+});
+
+test('as janelas de solicitar e editar oferecem [NOME], [DATA] e [VALOR]', () => {
+  const html = renderMessageRequestModal(requestModel(), register);
+  assert.deepStrictEqual([...html.matchAll(/data-insert-variable="([^"]+)"/g)].map(([, token]) => token), ['[NOME]', '[DATA]', '[VALOR]']);
+  assert.match(html, /<textarea[^>]*data-variable-target/);
+  assert.doesNotMatch(renderMessageRequestModal(requestModel({ type: 'arquivamento' }), register), /data-insert-variable/);
 });

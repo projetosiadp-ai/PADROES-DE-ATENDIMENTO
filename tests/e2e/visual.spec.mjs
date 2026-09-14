@@ -1,7 +1,8 @@
-﻿import { test, expect } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 import { dismissPendingNotice, dismissReleaseNotice, LOCAL_ACCOUNTS, LOCAL_SUPABASE_URL, loginAs, openLibrary } from '../fixtures/auth.mjs';
 import { TEST_DATA } from '../fixtures/data.mjs';
+import { ensureVariablesMessage } from '../fixtures/variables.mjs';
 import { prepareVisual, settleVisual, volatileRegions } from './helpers/visual.mjs';
 
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
@@ -151,3 +152,18 @@ for (const [tab, name] of ADMIN_SECTIONS) {
     });
   });
 }
+
+// Etapa 4: mensagem com variáveis, uma preenchida e outra vazia (tela 03, painel de leitura).
+test('@visual mensagem com variáveis', async ({ page }) => {
+  await ensureVariablesMessage();
+  await openLibrary(page, LOCAL_ACCOUNTS.collaborator);
+  await page.getByRole('searchbox', { name: 'Buscar mensagens' }).fill(TEST_DATA.messageVariables.titulo);
+  await page.getByRole('searchbox', { name: 'Buscar mensagens' }).blur();
+  await expect(page.locator('.dp-search__results')).toHaveCount(0);
+  await page.getByTestId(`message-item-${TEST_DATA.messageVariables.id}`).click();
+  const reading = page.locator('[aria-label="Leitura da mensagem"], [aria-modal="true"]').last();
+  await reading.getByRole('textbox', { name: 'Nome' }).fill('Marina Duarte');
+  await reading.getByRole('textbox', { name: 'Nome' }).blur();
+  await settleVisual(page);
+  await expect(reading).toHaveScreenshot('mensagem-com-variaveis.png', { mask: [reading.locator('[data-volatile]')] });
+});

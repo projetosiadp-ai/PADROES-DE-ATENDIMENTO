@@ -1,4 +1,4 @@
-﻿import { test, expect } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 import { LOCAL_ACCOUNTS, logout, openLibrary } from '../fixtures/auth.mjs';
 import { TEST_DATA, TEST_IDS } from '../fixtures/data.mjs';

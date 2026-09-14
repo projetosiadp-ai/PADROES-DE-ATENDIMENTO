@@ -31,6 +31,17 @@ export const TEST_DATA = Object.freeze({
     conteudo: 'Olá! Como podemos ajudar?',
     tags: Object.freeze(['boas-vindas', 'local']),
   }),
+  // Mensagem com [NOME] duas vezes e [DATA] uma vez (Etapa 4). Está em supabase/seed.sql e também é
+  // garantida por tests/fixtures/variables.mjs, porque o banco local nem sempre é recriado do seed.
+  messageVariables: Object.freeze({
+    id: '40000000-0000-4000-8000-000000000004',
+    acesso_id: TEST_IDS.accessAlpha,
+    categoria_id: TEST_IDS.categoryAlpha,
+    categoria: 'Boas-vindas',
+    titulo: 'Confirmação com variáveis',
+    conteudo: 'Olá, [NOME]! Sua consulta está confirmada para [DATA]. Qualquer dúvida, [NOME], estamos à disposição.',
+    tags: Object.freeze(['variaveis', 'local']),
+  }),
   messageBeta: Object.freeze({
     id: '40000000-0000-4000-8000-000000000003',
     acesso_id: TEST_IDS.accessBeta,

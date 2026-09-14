@@ -75,7 +75,7 @@ async function request(path, { method = 'GET', body, prefer } = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-async function upsert(table, rows, conflict = 'id') {
+export async function upsert(table, rows, conflict = 'id') {
   await request(`/rest/v1/${table}?on_conflict=${encodeURIComponent(conflict)}`, {
     method: 'POST',
     body: rows,

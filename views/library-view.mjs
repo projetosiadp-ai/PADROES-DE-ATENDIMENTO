@@ -30,10 +30,33 @@ function listItem(message, register) {
     </li>`;
 }
 
+// Etapa 4: um campo por variável, texto com variáveis e valores destacados e estado do preenchimento.
+export function variablesBlock(variables, register, { idPrefix = 'reading' } = {}) {
+  if (!variables) return { fields: '', text: '', status: '' };
+  const fields = `
+    <div class="dp-variable-fields">
+      ${variables.fields.map(field => `
+        <label class="dp-form-field">
+          <span class="dp-label">${escapeHtml(field.label)}</span>
+          <input class="dp-field" aria-label="${escapeHtml(field.label)}" data-variable="${escapeHtml(field.name)}" data-focus="${idPrefix}-variable-${escapeHtml(field.name)}"
+            value="${escapeHtml(field.value)}" data-input="${register(field.onInput)}" autocomplete="off" />
+        </label>`).join('')}
+    </div>`;
+  const text = variables.segments.map(segment => (segment.kind === 'text'
+    ? escapeHtml(segment.text)
+    : `<mark class="dp-highlight${segment.kind === 'variable' ? ' dp-highlight--empty' : ''}">${escapeHtml(segment.text)}</mark>`)).join('');
+  const status = `<span class="dp-variable-status" role="status">${escapeHtml(variables.status)}</span>`;
+  return { fields, text, status };
+}
+
 function readingActions(reading, register) {
+  const copy = reading.variables
+    ? `<button class="dp-btn-accent" data-click="${register(reading.variables.onCopyFilled)}">${reading.copied ? ICONS.check : ICONS.clipboard}${reading.copied ? 'Copiado' : 'Copiar preenchida'}</button>
+      <button class="dp-btn-secondary" data-click="${register(reading.variables.onCopyOriginal)}">Texto original</button>`
+    : `<button class="dp-btn-accent" data-click="${register(reading.onCopy)}">${reading.copied ? ICONS.check : ICONS.clipboard}${escapeHtml(reading.copyLabel)}</button>`;
   return `
     <div class="dp-reading__actions">
-      <button class="dp-btn-accent" data-click="${register(reading.onCopy)}">${reading.copied ? ICONS.check : ICONS.clipboard}${escapeHtml(reading.copyLabel)}</button>
+      ${copy}
       <button class="dp-btn-secondary" data-click="${register(reading.onPreview)}">${ICONS.eye}Visualizar</button>
       <button class="dp-btn-ghost" data-click="${register(reading.onEdit)}">${escapeHtml(reading.editLabel)}</button>
       <button class="dp-btn-ghost" data-click="${register(reading.onArchive)}">${escapeHtml(reading.archiveLabel)}</button>
@@ -43,6 +66,7 @@ function readingActions(reading, register) {
 function readingBody(reading, register, { asDialog = false } = {}) {
   // No celular a leitura abre como diálogo: o foco inicial vai para o título (ui-behavior.md).
   const headingAttrs = asDialog ? ' tabindex="-1" data-initial-focus' : '';
+  const variables = variablesBlock(reading.variables, register, { idPrefix: asDialog ? 'reading-dialog' : 'reading' });
   const tags = reading.tagChips.length
     ? `<div class="dp-reading__tags">${reading.tagChips.map(tag => `<button data-click="${register(tag.onClick)}">#${escapeHtml(tag.label)}</button>`).join('')}</div>`
     : '';
@@ -50,7 +74,9 @@ function readingBody(reading, register, { asDialog = false } = {}) {
   return `
     <div class="dp-kicker">${escapeHtml(reading.categoria)}</div>
     <h2${headingAttrs}>${escapeHtml(reading.titulo)}</h2>
-    <div class="dp-reading__text">${escapeHtml(reading.conteudo)}</div>
+    ${variables.fields}
+    <div class="dp-reading__text">${reading.variables ? variables.text : escapeHtml(reading.conteudo)}</div>
+    ${variables.status}
     ${tags}
     ${readingActions(reading, register)}
     <div class="dp-reading__footer">
@@ -104,6 +130,7 @@ export function renderLibraryView(model, register) {
         ${list}
         ${model.hasResults ? '' : `<div class="dp-empty"><div class="dp-empty__title">${escapeHtml(model.emptyTitle)}</div><div>${escapeHtml(model.emptyHint)}</div></div>`}
         ${loadMore}
+        ${model.hasResults && model.shortcutHint ? `<div class="dp-shortcuts">${escapeHtml(model.shortcutHint)}</div>` : ''}
       </div>
       ${panel}
     </main>`;

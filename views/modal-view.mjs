@@ -1,4 +1,4 @@
-﻿import { ICONS } from '../ui/icons.mjs';
+import { ICONS } from '../ui/icons.mjs';
 
 const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;')
@@ -14,6 +14,33 @@ const invalid = (model, field, errorId) => model.invalid?.includes(field)
   : '';
 const errorMessage = (message, id) => message
   ? `<p id="${id}" role="alert" class="dp-alert">${escapeHtml(message)}</p>`
+  : '';
+
+// Campo com contador (FR-022): o contador descreve o campo, e o erro, quando existe, vem junto.
+const describedBy = (model, field, errorId, counterId) => {
+  const isInvalid = model.invalid?.includes(field);
+  const ids = [counterId, isInvalid ? errorId : null].filter(Boolean).join(' ');
+  return `${isInvalid ? 'aria-invalid="true" ' : ''}aria-describedby="${ids}"`;
+};
+
+/* "N / limite caracteres". O texto visível muda a cada tecla, mas só é anunciado ao leitor de
+ * tela quando o campo chega a 90% e a 100% do limite (R11). */
+const counter = (id, label, value, max) => {
+  const length = String(value ?? '').length;
+  const warning = length >= max
+    ? `${label}: limite de ${max} caracteres atingido.`
+    : length >= Math.ceil(max * 0.9) ? `${label}: perto do limite de ${max} caracteres.` : '';
+  return `<span id="${id}" class="dp-counter${length >= max ? ' dp-counter--full' : ''}">${length} / ${max} caracteres</span>`
+    + `<span class="sr-only" aria-live="polite">${escapeHtml(warning)}</span>`;
+};
+
+// Atalhos "Inserir variável" (FR-020): inserem o marcador na posição do cursor do conteúdo.
+const VARIABLE_SHORTCUTS = ['[NOME]', '[DATA]', '[VALOR]'];
+const insertVariables = (model, register) => model.onInsertVariable
+  ? `<div class="dp-insert-variables" role="group" aria-label="Atalhos de variável">
+      <span class="dp-label">Inserir variável</span>
+      ${VARIABLE_SHORTCUTS.map(token => `<button type="button" data-insert-variable="${token}" data-click="${register(model.onInsertVariable)}" ${disabled(model.saving)}>${token}</button>`).join('')}
+    </div>`
   : '';
 
 let dialogSequence = 0;
@@ -77,8 +104,9 @@ function requestForm(model, register) {
       ${field('Categoria', `<select class="dp-field" aria-label="Categoria" data-change="${register(model.onCategoryChange)}" ${invalid(model, 'categoryId', errorId)} ${disabled(model.saving)}>${categoryOptions}</select>`)}
       ${field('Tags', `<input class="dp-field" aria-label="Tags" value="${escapeHtml(form.tagsText)}" data-input="${register(model.onTagsChange)}" ${disabled(model.saving)} placeholder="ex.: cobrança, retorno" />`)}
     </div>
-    ${field('Título', `<input class="dp-field" aria-label="Título" maxlength="100" value="${escapeHtml(form.title)}" data-input="${register(model.onTitleChange)}" ${invalid(model, 'title', errorId)} ${disabled(model.saving)} />`)}
-    ${field('Conteúdo', `<textarea class="dp-field" aria-label="Conteúdo" maxlength="2000" rows="7" data-input="${register(model.onContentChange)}" ${invalid(model, 'content', errorId)} ${disabled(model.saving)}>${escapeHtml(form.content)}</textarea>`)}
+    ${field('Título', `<input class="dp-field" aria-label="Título" maxlength="100" value="${escapeHtml(form.title)}" data-input="${register(model.onTitleChange)}" ${describedBy(model, 'title', errorId, 'request-title-counter')} ${disabled(model.saving)} />` + counter('request-title-counter', 'Título', form.title, 100))}
+    ${insertVariables(model, register)}
+    ${field('Conteúdo', `<textarea class="dp-field" aria-label="Conteúdo" data-variable-target maxlength="2000" rows="7" data-input="${register(model.onContentChange)}" ${describedBy(model, 'content', errorId, 'request-content-counter')} ${disabled(model.saving)}>${escapeHtml(form.content)}</textarea>` + counter('request-content-counter', 'Conteúdo', form.content, 2000))}
     ${errorMessage(model.error, errorId)}`;
 
   return renderDialog({
@@ -120,7 +148,7 @@ export function renderMessageEditorModal(model, register) {
 
   const body = `
     ${field('Categoria', `<select class="dp-field" aria-label="Categoria" data-change="${register(model.onCategoryChange)}" ${invalid(model, 'categoryId', errorId)} ${disabled(model.saving)}>${categoryOptions}</select>`)}
-    ${field('Título', `<input class="dp-field" aria-label="Título" type="text" maxlength="100" value="${escapeHtml(model.form.title)}" data-input="${register(model.onTitleChange)}" ${invalid(model, 'title', errorId)} ${disabled(model.saving)} />`)}
+    ${field('Título', `<input class="dp-field" aria-label="Título" type="text" maxlength="100" value="${escapeHtml(model.form.title)}" data-input="${register(model.onTitleChange)}" ${describedBy(model, 'title', errorId, 'editor-title-counter')} ${disabled(model.saving)} />` + counter('editor-title-counter', 'Título', model.form.title, 100))}
     <div class="dp-form-field">
       <span class="dp-label">Tags</span>
       ${tagChips ? `<div class="dp-chips">${tagChips}</div>` : ''}
@@ -129,7 +157,8 @@ export function renderMessageEditorModal(model, register) {
         ${button('Adicionar', model.onAddTag, register, { saving: model.saving, extra: 'aria-label="Adicionar tag"' })}
       </div>
     </div>
-    ${field('Conteúdo', `<textarea class="dp-field" aria-label="Conteúdo" maxlength="2000" rows="6" data-input="${register(model.onContentChange)}" ${invalid(model, 'content', errorId)} ${disabled(model.saving)}>${escapeHtml(model.form.content)}</textarea>`, { hint: `${escapeHtml(model.form.content.length)} / 2000 caracteres` })}
+    ${insertVariables(model, register)}
+    ${field('Conteúdo', `<textarea class="dp-field" aria-label="Conteúdo" data-variable-target maxlength="2000" rows="6" data-input="${register(model.onContentChange)}" ${describedBy(model, 'content', errorId, 'editor-content-counter')} ${disabled(model.saving)}>${escapeHtml(model.form.content)}</textarea>` + counter('editor-content-counter', 'Conteúdo', model.form.content, 2000))}
     ${errorMessage(model.error, errorId)}`;
 
   return renderDialog({
