@@ -325,3 +325,12 @@ A cópia de produção foi apagada do banco local e do contêiner; o banco local
 
 - Restante da T066: prévia do ramo com as etapas 1 a 5, aprovação do responsável, integração ao `main`, verificação em
   produção e remoção das regras de produção do `.claude/settings.local.json` (feita pelo responsável).
+
+## Publicação das Etapas 1 a 5 — 2026-09-14
+
+- O responsável aprovou a integração ao `main` sem conferir a prévia na Vercel (decisão registrada).
+- `main` avançado de `e8f12ca` para `499168c` (integração direta, sem conflito) em `Dental-Plus-Projetos/padroes-de-atendimento`
+  e `projetosiadp-ai/PADROES-DE-ATENDIMENTO`.
+- Banco de produção já estava com a migração da Etapa 5 (T066).
+- Pendente: verificação em produção pelo responsável (as URLs `*.vercel.app` do projeto exigem login da Vercel), conferência
+  manual por teclado e aviso à equipe de que clicar numa mensagem não copia mais — a cópia é pelo botão "Copiar" ou Enter.
