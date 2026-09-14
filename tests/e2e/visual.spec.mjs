@@ -15,12 +15,16 @@ test.beforeEach(async ({ page }) => {
   await prepareVisual(page);
 });
 
-// Com um diálogo aberto, só os valores voláteis dele são mascarados: as máscaras da página
-// por trás seriam desenhadas por cima do conteúdo do diálogo.
+// Com um diálogo aberto, a foto é só do diálogo: a página por trás acumula dados a cada
+// bateria e deixaria a comparação instável.
 const shot = async (page, name, { dialog = false } = {}) => {
   await settleVisual(page);
-  const mask = dialog ? [page.locator('[aria-modal="true"] [data-volatile]')] : volatileRegions(page);
-  await expect(page).toHaveScreenshot(name, { fullPage: true, mask });
+  if (dialog) {
+    const modal = page.locator('[aria-modal="true"]');
+    await expect(modal).toHaveScreenshot(name, { mask: [modal.locator('[data-volatile]')] });
+    return;
+  }
+  await expect(page).toHaveScreenshot(name, { fullPage: true, mask: volatileRegions(page) });
 };
 
 test('@visual login', async ({ page }) => {
@@ -76,6 +80,49 @@ test('@visual visão geral', async ({ page }) => {
   await page.getByRole('button', { name: 'Visão geral' }).click();
   await expect(page.getByTestId('overview-ready')).toBeVisible();
   await shot(page, 'visao-geral.png');
+});
+
+// Etapa 2: cada janela, aberta sobre a mesma mensagem determinística.
+async function openAlphaReading(page) {
+  await openLibrary(page, LOCAL_ACCOUNTS.collaborator);
+  await page.getByRole('searchbox', { name: 'Buscar mensagens' }).fill(TEST_DATA.messageAlpha.titulo);
+  await page.getByRole('searchbox', { name: 'Buscar mensagens' }).blur();
+  await expect(page.locator('.dp-search__results')).toHaveCount(0);
+  await page.getByTestId(`message-item-${TEST_DATA.messageAlpha.id}`).click();
+  return page.locator('[aria-label="Leitura da mensagem"], [aria-modal="true"]').last();
+}
+
+test('@visual janela solicitar nova mensagem', async ({ page }) => {
+  await openLibrary(page, LOCAL_ACCOUNTS.collaborator);
+  await page.getByRole('button', { name: 'Solicitar mensagem' }).click();
+  await expect(page.getByRole('dialog', { name: 'Solicitar nova mensagem' })).toBeVisible();
+  await shot(page, 'janela-solicitar.png', { dialog: true });
+});
+
+test('@visual janela visualizar', async ({ page }) => {
+  const reading = await openAlphaReading(page);
+  await reading.getByRole('button', { name: 'Visualizar' }).click();
+  await expect(page.getByRole('dialog', { name: TEST_DATA.messageAlpha.titulo })).toBeVisible();
+  await shot(page, 'janela-visualizar.png', { dialog: true });
+});
+
+test('@visual janela solicitar arquivamento', async ({ page }) => {
+  const reading = await openAlphaReading(page);
+  await reading.getByRole('button', { name: 'Solicitar arquivamento' }).click();
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  await shot(page, 'janela-arquivamento.png', { dialog: true });
+});
+
+test('@visual janela criar conta', async ({ page }) => {
+  await openLibrary(page, LOCAL_ACCOUNTS.superadmin);
+  await page.getByRole('button', { name: 'Administração' }).click();
+  await page.getByRole('tab', { name: 'Contas' }).click();
+  await page.getByRole('button', { name: 'Nova conta' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Criar conta' });
+  await expect(dialog).toBeVisible();
+  // A lista de acessos cresce com as jornadas estruturais: só o formulário entra na comparação.
+  await settleVisual(page);
+  await expect(dialog).toHaveScreenshot('janela-criar-conta.png', { mask: [dialog.locator('fieldset')] });
 });
 
 test('@visual administração de solicitações', async ({ page }) => {

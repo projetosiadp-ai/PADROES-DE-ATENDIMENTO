@@ -1,7 +1,8 @@
-import { test, expect } from '@playwright/test';
+﻿import { test, expect } from '@playwright/test';
 
 import { loginAs, openLibrary } from '../fixtures/auth.mjs';
 import { TEST_DATA, TEST_IDS } from '../fixtures/data.mjs';
+import { CURRENT_RELEASE } from '../../domain/release-notes.mjs';
 
 const libraryItem = (page) => page.getByTestId(`message-item-${TEST_IDS.messageAlpha}`);
 const reading = (page) => page.locator('[aria-label="Leitura da mensagem"], [aria-modal="true"]').last();
@@ -162,7 +163,7 @@ test('o aviso de novidades aparece uma vez por navegador', async ({ page }) => {
   await expect(notice).toContainText('Copiar');
   await notice.getByRole('button', { name: 'Entendi' }).click();
   await expect(notice).toBeHidden();
-  await expect.poll(() => page.evaluate(() => localStorage.getItem('dp_novidades'))).toBe('etapa-1');
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('dp_novidades'))).toBe(CURRENT_RELEASE);
 
   await page.reload();
   await expect(page.getByTestId('library-ready')).toBeVisible({ timeout: 15_000 });

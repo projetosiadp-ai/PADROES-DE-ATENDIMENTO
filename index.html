@@ -96,7 +96,6 @@
   .dp-view-enter { animation: dp-fade-in .18s ease-out; }
   .dp-table-scroll { overflow-x: auto; }
   .dp-admin-card { min-width: 0; }
-  [aria-modal="true"] { max-width: calc(100vw - 40px) !important; }
 
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
@@ -109,9 +108,7 @@
 
   @media (max-width: 720px) {
     .dp-admin-layout { padding: 14px 12px 40px !important; }
-    .dp-admin-card { grid-template-columns: 1fr !important; }
-    [aria-modal="true"] { max-width: calc(100vw - 24px) !important; padding:20px 16px !important; }
-  }
+    .dp-admin-card { grid-template-columns: 1fr !important; }  }
 </style>
 </head>
 <body>

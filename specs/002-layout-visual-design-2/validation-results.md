@@ -122,3 +122,28 @@ indisponível.
   espelha os tokens; `app.js`, `views/shell-view.mjs` e `views/library-view.mjs` já estão em `MIGRATED_FILES`.
 - Defeitos encontrados e corrigidos antes da entrega: a faixa da marca recortava os resultados da busca; a leitura em
   diálogo sobrevivia à navegação e bloqueava o menu; a busca ficava espremida a 360 px.
+
+## Etapa 2 (janelas) — 2026-09-14
+
+### Testes automatizados (T041, verificação local)
+
+| Suíte | Resultado |
+|---|---|
+| `npm run test:unit` | 76 de 76 (4 testes novos de anatomia das janelas) |
+| `npm run test:e2e` | 30 de 30; 8 pulados |
+| `npm run test:a11y` | 9 de 9 (a primeira tentativa não chegou a rodar: o servidor local não subiu em 30 s) |
+| `npm run test:visual` | 21 de 21, e 21 de 21 na conferência seguinte contra as fotos salvas |
+
+### Decisões
+
+- Todas as janelas usam a mesma casca (`renderDialog` em `views/modal-view.mjs`): cabeçalho azul com o título como nome
+  acessível (`aria-labelledby`), corpo claro e ação principal por último, à direita.
+- O ✕ do cabeçalho existe nas janelas comuns e fica por último na ordem de foco, para não mudar o foco inicial (primeiro
+  campo). Alertas de confirmação não têm ✕: saem por "Cancelar", como antes.
+- O aviso de solicitações pendentes continua sem fechar ao clicar fora.
+- As fotos de janelas fotografam só o diálogo: a página por trás acumula dados a cada bateria.
+- As notas de novidades repetem a mudança da forma de copiar, porque a Etapa 1 ainda não foi publicada.
+
+### Publicação
+
+Pendente de aprovação do responsável (prévia do ramo `002-etapa-2-janelas`).

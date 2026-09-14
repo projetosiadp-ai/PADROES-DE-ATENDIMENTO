@@ -14,7 +14,7 @@ import { ICONS } from './ui/icons.mjs';
 import { DEFAULT_ACCESS_COLOR, LEGACY_THEME } from './ui/legacy-theme.mjs';
 import { renderLibraryOverview, renderLibraryReadingDialog, renderLibraryView } from './views/library-view.mjs';
 import { renderBrandBand, renderCategoryPills, renderLoginView, renderNoAccessView, renderReleaseNotesDialog } from './views/shell-view.mjs';
-import { renderAdminConfirmationModal, renderMessageEditorModal, renderMessageRequestModal, renderRequestReviewModal, renderStructuralModals } from './views/modal-view.mjs';
+import { renderAdminConfirmationModal, renderDialog, renderMessageEditorModal, renderMessageRequestModal, renderRequestReviewModal, renderStructuralModals } from './views/modal-view.mjs';
 import { renderAdminView } from './views/admin-view.mjs';
 
 const esc = (s) => String(s == null ? '' : s)
@@ -1008,7 +1008,7 @@ class App {
       closePreview: () => this.setState({ showPreviewModal: false }),
       previewingMsg: previewing ? {
         titulo: previewing.titulo, categoria: categoryName(previewing),
-        catColor: this.categoryColor(categoryName(previewing)), catIcon: this.categoryIcon(categoryName(previewing)),
+        usageLabel: usageLabel(previewing.frequencia), copied: st.copiedId === previewing.id,
         conteudo: previewing.conteudo, onCopy: () => copyMessage(previewing)
       } : null,
 
@@ -1875,40 +1875,26 @@ class App {
     const stay = H(() => {});
 
     if (v.showApprovalPopup) {
-      out += `
-      <div role="presentation" style="position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:120; padding:20px;">
-        <div role="alertdialog" aria-modal="true" aria-label="Solicitações pendentes" style="width:100%; max-width:380px; background:${t.modalSolidBg}; border-radius:16px; padding:26px; animation:dp-modal-in .18s ease-out;">
-          <div style="font-size:18px; font-weight:800; margin-bottom:8px;">Solicitações pendentes</div>
-          <div style="font-size:13px; color:${t.textSecondary}; margin-bottom:20px; line-height:1.5;">Há ${v.approvalPopupCount} solicitaç${v.approvalPopupCount === 1 ? 'ão' : 'ões'} de mensagem aguardando sua aprovação.</div>
-          <div style="display:flex; justify-content:flex-end; gap:10px;">
-            <button data-click="${H(v.dismissApprovalPopup)}" style="padding:9px 16px; border-radius:8px; border:1px solid ${t.border}; background:transparent; color:${t.text}; font-size:13px; font-weight:700; cursor:pointer;">Dispensar</button>
-            <button data-click="${H(v.goApprovals)}" style="padding:9px 16px; border-radius:8px; border:none; background:${t.navy}; color:${t.onBrand}; font-size:13px; font-weight:700; cursor:pointer;">Ver solicitações</button>
-          </div>
-        </div>
-      </div>`;
+      const count = v.approvalPopupCount;
+      out += renderDialog({
+        role: 'alertdialog', name: 'Solicitações pendentes', size: 'sm', register: H,
+        onClose: v.dismissApprovalPopup, backdropCloses: false,
+        body: `<p class="dp-dialog__text">Há ${count} solicitaç${count === 1 ? 'ão' : 'ões'} de mensagem aguardando sua aprovação.</p>`,
+        actions: `<button type="button" class="dp-btn-secondary" data-click="${H(v.dismissApprovalPopup)}">Dispensar</button>`
+          + `<button type="button" class="dp-btn-primary" data-click="${H(v.goApprovals)}">Ver solicitações</button>`,
+      });
     }
 
+    // Tela 04: categoria e usos no cabeçalho, título como nome acessível e "Copiar mensagem".
     if (v.showPreviewModal && v.previewingMsg) {
       const m = v.previewingMsg;
-      out += `
-      <div role="presentation" data-click="${H(v.closePreview)}" style="position:fixed; inset:0; background:rgba(5,10,26,0.55); backdrop-filter:blur(5px); display:flex; align-items:center; justify-content:center; z-index:100; padding:20px;">
-        <div role="dialog" aria-modal="true" aria-label="${esc(m.titulo)}" data-click="${stay}" style="width:100%; max-width:560px; background:${t.modalSolidBg}; border-radius:${t.radiusXl}; padding:26px; animation:dp-modal-in .18s ease-out;">
-          <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
-            ${this.avatarIcon(m.catIcon, m.catColor, 30)}
-            <span style="font-size:12.5px; font-weight:800; color:${t.textSecondary};">${esc(m.categoria)}</span>
-            <span style="flex:1;"></span>
-            <button data-click="${H(v.closePreview)}" style="border:0; background:${t.inputBg}; color:${t.textSecondary}; width:30px; height:30px; border-radius:${t.radiusSm}; cursor:pointer; font-size:15px; font-weight:700;">✕</button>
-          </div>
-          <h3 style="margin:4px 0 14px; font-size:19px; font-weight:700; letter-spacing:-0.3px; font-family:${t.fontDisplay};">${esc(m.titulo)}</h3>
-          <div style="background:${t.inputBg}; border:1px solid ${t.border}; border-radius:${t.radiusMd}; padding:16px 18px; white-space:pre-wrap; font-size:14px; line-height:1.65; color:${t.text}; max-height:48vh; overflow:auto;">${esc(m.conteudo)}</div>
-          <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:18px;">
-            <button data-click="${H(v.closePreview)}" style="border:1px solid ${t.border}; background:transparent; color:${t.textSecondary}; font-weight:700; font-size:13.5px; padding:10px 18px; border-radius:${t.radiusSm}; cursor:pointer;">Fechar</button>
-            <button data-click="${H(m.onCopy)}" style="display:flex; align-items:center; gap:7px; border:0; border-radius:${t.radiusSm}; background:${t.brandGradient}; color:${t.onBrand}; font-weight:800; font-size:13.5px; padding:10px 18px; cursor:pointer; box-shadow:${t.glow};">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copiar mensagem
-            </button>
-          </div>
-        </div>
-      </div>`;
+      out += renderDialog({
+        name: m.titulo, kicker: `${m.categoria} · ${m.usageLabel}`, size: 'lg', register: H, layer: 100,
+        onClose: v.closePreview,
+        body: `<div class="dp-reading__text">${esc(m.conteudo)}</div>`,
+        actions: `<button type="button" class="dp-btn-secondary" data-click="${H(v.closePreview)}">Fechar</button>`
+          + `<button type="button" class="dp-btn-accent" data-click="${H(m.onCopy)}">${m.copied ? ICONS.check : ICONS.clipboard}${m.copied ? 'Copiada' : 'Copiar mensagem'}</button>`,
+      });
     }
 
     if (v.paletteOpen) {

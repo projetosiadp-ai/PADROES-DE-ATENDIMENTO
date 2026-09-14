@@ -114,14 +114,14 @@ correspondente (ramo → prévia na Vercel → aprovação do responsável → `
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T036 [P] [US2] Estender `tests/modal-view.test.mjs`: todo diálogo tem cabeçalho `dp-dialog` com título que é o nome acessível, ação principal à direita, "Fechar"/"Cancelar" presente, estados ocupados e campos inválidos inalterados
+- [X] T036 [P] [US2] Estender `tests/modal-view.test.mjs`: todo diálogo tem cabeçalho `dp-dialog` com título que é o nome acessível, ação principal à direita, "Fechar"/"Cancelar" presente, estados ocupados e campos inválidos inalterados
 
 ### Implementation for User Story 2
 
-- [ ] T037 [US2] Reescrever em `views/modal-view.mjs` `renderMessageRequestModal`, `renderMessageEditorModal`, `renderAdminConfirmationModal`, `renderRequestReviewModal` e `renderStructuralModals` no padrão das telas 04 e 05 (cabeçalho `--dp-band-gradient`, corpo claro, ações à direita), sem literais de cor
-- [ ] T038 [US2] Em `app.js` (`viewModals()`), aplicar o mesmo padrão à janela "Visualizar" (categoria e usos no cabeçalho, "Copiar mensagem"), ao aviso de solicitações pendentes e à janela de senha temporária
-- [ ] T039 [US2] Atualizar `RELEASE_NOTES`/`CURRENT_RELEASE` em `domain/release-notes.mjs` para a Etapa 2
-- [ ] T040 [US2] Acrescentar fotos de cada janela em `tests/e2e/visual.spec.mjs`, auditorias axe das janelas em `tests/e2e/accessibility.spec.mjs` e `views/modal-view.mjs` em `MIGRATED_FILES` de `tests/design-tokens.test.mjs`
+- [X] T037 [US2] Reescrever em `views/modal-view.mjs` `renderMessageRequestModal`, `renderMessageEditorModal`, `renderAdminConfirmationModal`, `renderRequestReviewModal` e `renderStructuralModals` no padrão das telas 04 e 05 (cabeçalho `--dp-band-gradient`, corpo claro, ações à direita), sem literais de cor
+- [X] T038 [US2] Em `app.js` (`viewModals()`), aplicar o mesmo padrão à janela "Visualizar" (categoria e usos no cabeçalho, "Copiar mensagem"), ao aviso de solicitações pendentes e à janela de senha temporária
+- [X] T039 [US2] Atualizar `RELEASE_NOTES`/`CURRENT_RELEASE` em `domain/release-notes.mjs` para a Etapa 2
+- [X] T040 [US2] Acrescentar fotos de cada janela em `tests/e2e/visual.spec.mjs`, auditorias axe das janelas em `tests/e2e/accessibility.spec.mjs` e `views/modal-view.mjs` em `MIGRATED_FILES` de `tests/design-tokens.test.mjs`
 - [ ] T041 [US2] Verificação local completa e publicação da Etapa 2 (ramo `002-etapa-2-janelas`, prévia, aprovação, `main`, verificação em produção)
 
 **Checkpoint**: US1 e US2 funcionando juntas
