@@ -50,9 +50,20 @@ ficou em p75 de 1.649 ms. Nenhuma das falhas envolve código da Etapa 0 (que nã
 tela); são instabilidades da máquina de medição. A margem do limite de 2.000 ms é estreita neste
 equipamento: vale repetir a suíte de desempenho isolada, sem o restante rodando junto.
 
-### Ensaio de reversão (T014, SC-011)
+### Publicação (T014)
 
-A registrar na publicação da etapa.
+Aprovada pelo responsável em 2026-09-14 e integrada ao `main` dos dois repositórios (`e8f12ca`, avanço direto a partir
+de `9a91ff6`). Conferido em `https://padroes-de-atendimento.vercel.app`: código (`/`, `app.js`, `views/`, `styles/`) com
+`public, max-age=0, must-revalidate`; `vendor/`, fontes e `assets/` com `max-age=3600, stale-while-revalidate=86400`;
+HTML com a folha `styles/design-system.css` e sem o `preload` da Manrope; `X-Robots-Tag` e CSP (`font-src 'self'`)
+mantidos.
+
+### Ensaio de reversão (SC-011) — dispensado
+
+O responsável dispensou o ensaio cronometrado de Instant Rollback, porque o sistema tem pouquíssimo uso pela equipe
+neste momento. Consequências registradas: o tempo de reversão não foi medido, e não foi confirmado que "Promote"
+reativa a publicação automática depois de um Instant Rollback. A reversão continua disponível na Vercel; se for usada,
+conferir em seguida se o painel ainda mostra "Production · Staged".
 
 ## Etapa 1 (Biblioteca, faixa, login e Visão geral) — 2026-09-14
 
