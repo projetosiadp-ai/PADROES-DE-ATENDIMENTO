@@ -236,3 +236,65 @@ publicação. O Lighthouse não foi repetido nesta etapa.
 ### Publicação
 
 Pendente de aprovação do responsável (prévia do ramo `002-etapa-4-variaveis`).
+
+## Etapa 5 (revisão com ajustes, Suas solicitações e histórico) — 2026-09-14
+
+Implementada e verificada **somente no banco local**. Nenhum comando foi executado contra o Supabase de produção.
+
+### Banco (T055, T058, T059)
+
+- Migração `supabase/migrations/20260914120000_request_review_adjustments.sql`: colunas da versão publicada,
+  `comentario_revisao` e `ajustada`; regras de consistência (as que podem esbarrar em linhas antigas como `NOT VALID`);
+  backfill; índices para as listas; `aprovar_solicitacao(p_id, p_ajustes, p_comentario)` substituindo a versão de um
+  argumento; `rejeitar_solicitacao` gravando também o comentário.
+- Regra nova `solicitacoes_mensagem_pendente_sem_revisao_check`: um pedido pendente não pode chegar com comentário,
+  versão publicada ou "ajustada". Sem ela, o colaborador conseguiria enviar um retorno falso, porque a política de
+  inserção existente não conhece as colunas novas.
+- `grant execute on function private.request_tags_are_valid(text[]) to service_role`: as regras de etiquetas chamam essa
+  função e recusavam gravações feitas pelo `service_role` (encontrado pelo fixture das fotos).
+- Ensaio local: as três regras `NOT VALID` foram validadas contra os dados locais numa transação desfeita, sem violação
+  (16 aprovadas ganharam versão publicada e 8 rejeitadas ganharam comentário no backfill).
+- pgTAP `request_review.test.sql`: 35 casos; `supabase test db` com 107 de 107.
+- `supabase/schema.sql` regenerado do banco local, mantido o cabeçalho anterior (o dump do CLI acrescentava extensões e
+  a publicação do Realtime, que não fazem parte do schema versionado).
+
+### Aplicação (T056, T057, T060–T064)
+
+- `api.js`: `approveMessageRequest(requestId, { adjustments, comment })`, `listMyRequests`, `listRequestHistory` e
+  `getRequestDetail`; o contrato de exportações passou a incluir a seção da Etapa 5.
+- `domain/requests.mjs`: rótulo "Aprovada com ajustes", filtros, período em dias de São Paulo, comentário, resumo e
+  detalhe. Mensagens de erro específicas em `domain/error-policy.mjs`, onde já existia o mapa por motivo.
+- Painel de decisão: campo "Comentário" (opcional ao aprovar, vira "Motivo da rejeição" ao rejeitar), "Editar e aprovar"
+  em criação e edição, com categoria, título, etiquetas e conteúdo editáveis e validados.
+- `views/requests-view.mjs`: "Suas solicitações" (colaborador) e "Histórico" (pílula da Administração), com
+  paginação, carregamento, erro com "Tentar de novo" e estado vazio. Atalho na Visão geral e aviso nas janelas de
+  solicitação.
+
+### Testes automatizados (verificação local)
+
+| Suíte | Resultado |
+|---|---|
+| `npm run test:db` | 107 de 107 (35 novos em `request_review.test.sql`) |
+| `npm run test:unit` | 112 de 112 (novos: `tests/requests-view.test.mjs`, painel de decisão, domínio e contrato) |
+| `npm run test:e2e` | 43 de 43 — 42 na bateria e 1 (jornada da Etapa 5 a 360 px) na repetição isolada; a falha foi tempo esgotado ao abrir a Biblioteca |
+| `npm run test:a11y` | 9 de 9 — 7 na bateria e 2 na repetição isolada (mesmo tempo esgotado e a tabela do histórico demorando mais de 5 s) |
+| `npm run test:visual` | 33 de 33 gerados; conferência com 32 de 33 e a 33ª ("administração — contas") aprovada na repetição isolada |
+
+Fotos novas: "Suas solicitações" com pedido ajustado e histórico filtrado. Regeradas por mudança intencional: aviso de
+novidades, Visão geral (atalho), janelas de solicitar e de arquivamento (texto) e as quatro seções da Administração
+(pílula "Histórico"). O contador de pendentes da navegação passou a ser mascarado, porque cresce a cada jornada.
+Desempenho não foi medido nesta etapa.
+
+### Defeitos encontrados e corrigidos na verificação
+
+- Colaborador poderia enviar pedido já com comentário ou "ajustada" (corrigido com a regra de pedido pendente).
+- `service_role` sem permissão na função de etiquetas (corrigido na migração).
+- No celular, a situação espremia o título da lista de "Suas solicitações"; agora desce para a linha de baixo.
+- Localizadores de teste que dependiam da primeira mensagem da lista ou do botão "Aprovar" por trecho do nome.
+
+### Pendente de autorização
+
+- T065: ensaio com backup **novo** de produção (quickstart, "Etapas com banco").
+- T066: `db push --linked --dry-run`, revisão e `db push --linked` em produção, com regras exatas no
+  `.claude/settings.local.json`. A migração é aditiva e mantém a chamada antiga de aprovação, então pode ir ao banco
+  antes da publicação do frontend.

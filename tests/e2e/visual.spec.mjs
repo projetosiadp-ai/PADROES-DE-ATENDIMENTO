@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 
 import { dismissPendingNotice, dismissReleaseNotice, LOCAL_ACCOUNTS, LOCAL_SUPABASE_URL, loginAs, openLibrary } from '../fixtures/auth.mjs';
 import { TEST_DATA } from '../fixtures/data.mjs';
+import { ADJUSTED_REQUEST, ensureAdjustedRequest } from '../fixtures/requests.mjs';
 import { ensureVariablesMessage } from '../fixtures/variables.mjs';
 import { prepareVisual, settleVisual, volatileRegions } from './helpers/visual.mjs';
 
@@ -152,6 +153,34 @@ for (const [tab, name] of ADMIN_SECTIONS) {
     });
   });
 }
+
+// Etapa 5: "Suas solicitações" com um pedido ajustado e o histórico filtrado até sobrar só ele.
+test('@visual suas solicitações com pedido ajustado', async ({ page }) => {
+  await ensureAdjustedRequest();
+  await openLibrary(page, LOCAL_ACCOUNTS.otherCollaborator);
+  await page.getByRole('button', { name: 'Suas solicitações', exact: true }).click();
+  const detail = page.getByRole('complementary', { name: 'Detalhe da solicitação' });
+  await page.locator(`[data-request-id="${ADJUSTED_REQUEST.id}"]`).click();
+  await expect(detail).toContainText(ADJUSTED_REQUEST.comment);
+  await expect(detail).toContainText('Publicado');
+  await shot(page, 'suas-solicitacoes-ajustada.png');
+});
+
+test('@visual histórico filtrado', async ({ page }) => {
+  await ensureAdjustedRequest();
+  await openLibrary(page, LOCAL_ACCOUNTS.superadmin);
+  await page.getByLabel('Acesso ativo').selectOption(TEST_DATA.accessAlpha.id);
+  await page.getByRole('button', { name: 'Administração' }).click();
+  await page.getByRole('tab', { name: 'Histórico' }).click();
+  const history = page.getByRole('table', { name: 'Histórico de solicitações' });
+  await expect(history).toBeVisible();
+  await page.getByLabel('Solicitante', { exact: true }).selectOption({ label: 'Colaborador Beta' });
+  await page.getByLabel('Situação', { exact: true }).selectOption('aprovada_com_ajustes');
+  await expect(history.locator('tbody tr')).toHaveCount(1);
+  await expect(history).toContainText(ADJUSTED_REQUEST.publishedTitle);
+  await expect(page.getByText(/Carregando/)).toHaveCount(0);
+  await shot(page, 'historico-filtrado.png');
+});
 
 // Etapa 4: mensagem com variáveis, uma preenchida e outra vazia (tela 03, painel de leitura).
 test('@visual mensagem com variáveis', async ({ page }) => {

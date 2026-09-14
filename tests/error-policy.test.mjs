@@ -44,6 +44,21 @@ test('categoria não vazia informa quantas mensagens ativas bloqueiam o arquivam
   );
 });
 
+test('revisão com ajustes explica ajuste em arquivamento e comentário inválido', () => {
+  const notAllowed = resolveErrorPolicy({ code: 'P0001', message: 'VALIDATION:ADJUSTMENTS_NOT_ALLOWED' });
+  assert.strictEqual(notAllowed.code, 'VALIDATION');
+  assert.strictEqual(notAllowed.focusInvalid, true);
+  assert.strictEqual(notAllowed.message, 'Pedidos de arquivamento só podem ser aprovados ou rejeitados, sem ajustes.');
+  assert.strictEqual(
+    describeAppError({ code: 'P0001', message: 'VALIDATION:REVIEW_COMMENT' }),
+    'O comentário deve ter no máximo 500 caracteres.',
+  );
+  assert.strictEqual(
+    describeAppError({ code: 'P0001', message: 'VALIDATION:CATEGORY_NOT_ACTIVE_IN_ACCESS' }),
+    'Escolha uma categoria ativa deste acesso.',
+  );
+});
+
 test('o chamador pode especializar a mensagem de um código sem mudar a política', () => {
   const policy = resolveErrorPolicy(new TypeError('Failed to fetch'), { NETWORK: 'Não foi possível confirmar o envio. Tente novamente.' });
   assert.strictEqual(policy.code, 'NETWORK');

@@ -4,12 +4,23 @@ import { normalize, levenshtein, fuzzyTok, matchesSearch, titleSegments, pickAct
 import { canPublishContent, canUseAccess, canViewAdministration } from '../domain/permissions.mjs';
 import { normalizeTags, paginateLibraryMessages, selectLibraryMessages } from '../domain/library.mjs';
 import {
+  REQUEST_HISTORY_STATUS_FILTERS,
   REQUEST_STATUS_LABELS,
   REQUEST_TYPE_LABELS,
+  REVIEW_COMMENT_MAX,
   canTransitionRequest,
   getOrCreateIdempotencyKey,
+  hasPublishedComparison,
+  historyDateBounds,
   isArchiveRequest,
+  normalizeReviewComment,
+  requestStatusFilter,
+  requestStatusLabel,
   requestTypeLabel,
+  reviewCommentError,
+  toAdjustmentsPayload,
+  toRequestDetail,
+  toRequestSummary,
 } from '../domain/requests.mjs';
 
 let passed = 0, failed = 0;
@@ -194,6 +205,98 @@ test('rotulo de solicitacao trata o tipo legado exclusao como arquivamento', () 
   assert.strictEqual(requestTypeLabel('exclusao'), 'Arquivamento');
   assert.strictEqual(isArchiveRequest('exclusao'), true);
   assert.strictEqual(isArchiveRequest('edicao'), false);
+});
+
+test('situacao da solicitacao distingue aprovada com ajustes', () => {
+  assert.strictEqual(requestStatusLabel('pendente'), 'Pendente');
+  assert.strictEqual(requestStatusLabel('aprovada', false), 'Aprovada');
+  assert.strictEqual(requestStatusLabel('aprovada', true), 'Aprovada com ajustes');
+  assert.strictEqual(requestStatusLabel('rejeitada', true), 'Rejeitada');
+  assert.strictEqual(requestStatusLabel('desconhecida'), 'Solicitação');
+});
+
+test('pedidos antigos sem versao publicada mostram so a situacao, sem comparacao', () => {
+  const legacy = { status: 'aprovada', tipo: 'criacao', titulo: 'Antiga', conteudo: 'Texto' };
+  assert.strictEqual(requestStatusLabel(legacy.status, legacy.ajustada), 'Aprovada');
+  assert.strictEqual(hasPublishedComparison(legacy), false);
+  assert.strictEqual(hasPublishedComparison({ ...legacy, ajustada: false, titulo_publicado: 'Antiga' }), false);
+  assert.strictEqual(hasPublishedComparison({ ...legacy, ajustada: true, titulo_publicado: 'Nova' }), true);
+});
+
+test('filtro aprovada_com_ajustes vira aprovada + ajustada', () => {
+  assert.deepStrictEqual(requestStatusFilter('aprovada_com_ajustes'), { status: 'aprovada', adjusted: true });
+  assert.deepStrictEqual(requestStatusFilter('aprovada'), { status: 'aprovada', adjusted: false });
+  assert.deepStrictEqual(requestStatusFilter('pendente'), { status: 'pendente', adjusted: null });
+  assert.deepStrictEqual(requestStatusFilter('rejeitada'), { status: 'rejeitada', adjusted: null });
+  assert.deepStrictEqual(requestStatusFilter(''), { status: null, adjusted: null });
+  assert.deepStrictEqual(requestStatusFilter(undefined), { status: null, adjusted: null });
+  assert.throws(() => requestStatusFilter('arquivada'), RangeError);
+  assert.deepStrictEqual(REQUEST_HISTORY_STATUS_FILTERS, ['pendente', 'aprovada', 'aprovada_com_ajustes', 'rejeitada']);
+});
+
+test('periodo do historico usa dias inteiros de Sao Paulo', () => {
+  assert.deepStrictEqual(historyDateBounds({ from: '2026-09-01', to: '2026-09-14' }), {
+    gte: '2026-09-01T00:00:00-03:00',
+    lt: '2026-09-15T00:00:00-03:00',
+  });
+  assert.deepStrictEqual(historyDateBounds({ to: '2026-12-31' }), { gte: null, lt: '2027-01-01T00:00:00-03:00' });
+  assert.deepStrictEqual(historyDateBounds({}), { gte: null, lt: null });
+  assert.throws(() => historyDateBounds({ from: '14/09/2026' }), RangeError);
+});
+
+test('comentario da revisao e opcional ao aprovar e obrigatorio ao rejeitar', () => {
+  assert.strictEqual(normalizeReviewComment('   '), null);
+  assert.strictEqual(normalizeReviewComment('  Ok  '), 'Ok');
+  assert.strictEqual(reviewCommentError('', { required: false }), null);
+  assert.strictEqual(reviewCommentError('  ', { required: true }), 'Informe o motivo da rejeição.');
+  assert.strictEqual(reviewCommentError('x'.repeat(501), { required: false }), 'Use no máximo 500 caracteres.');
+  assert.strictEqual(REVIEW_COMMENT_MAX, 500);
+});
+
+test('ajustes viram o formato da funcao do banco', () => {
+  assert.deepStrictEqual(
+    toAdjustmentsPayload({ categoryId: 'c1', title: ' T ', tags: ['a'], content: ' C ' }),
+    { categoria_id: 'c1', titulo: 'T', tags: ['a'], conteudo: 'C' },
+  );
+  assert.strictEqual(toAdjustmentsPayload(null), null);
+});
+
+test('resumo da solicitacao omite nomes quando a leitura nao os traz', () => {
+  const row = {
+    id: 'r1', tipo: 'edicao', status: 'aprovada', ajustada: true,
+    titulo: 'Enviado', titulo_publicado: 'Publicado', titulo_anterior: 'Antes',
+    acessos: { nome: 'Clínica' }, criado_em: '2026-09-10T12:00:00Z', revisado_em: '2026-09-11T12:00:00Z',
+    comentario_revisao: 'Ajustei', motivo_rejeicao: null,
+  };
+  assert.deepStrictEqual(toRequestSummary(row), {
+    id: 'r1', type: 'edicao', status: 'aprovada', adjusted: true, statusLabel: 'Aprovada com ajustes',
+    title: 'Publicado', accessName: 'Clínica', requesterName: null, createdAt: '2026-09-10T12:00:00Z',
+    reviewedAt: '2026-09-11T12:00:00Z', reviewerName: null, comment: 'Ajustei',
+  });
+  const legacyRejected = { ...row, status: 'rejeitada', ajustada: undefined, titulo_publicado: null,
+    comentario_revisao: null, motivo_rejeicao: 'Motivo antigo', solicitante: { nome: 'Ana' }, revisor: { nome: 'Bia' } };
+  const summary = toRequestSummary(legacyRejected);
+  assert.strictEqual(summary.title, 'Enviado');
+  assert.strictEqual(summary.comment, 'Motivo antigo');
+  assert.strictEqual(summary.adjusted, false);
+  assert.strictEqual(summary.requesterName, 'Ana');
+  assert.strictEqual(summary.reviewerName, 'Bia');
+  assert.strictEqual(toRequestSummary({ ...row, tipo: 'arquivamento', titulo: null, titulo_publicado: null }).title, 'Antes');
+});
+
+test('detalhe da solicitacao separa anterior, enviada e publicada', () => {
+  const detail = toRequestDetail({
+    id: 'r2', tipo: 'criacao', status: 'aprovada', ajustada: true, acesso_id: 'a1', mensagem_id: 'm1',
+    categoria_id: 'c1', categoria: 'Cobrança', titulo: 'Enviado', conteudo: 'Texto enviado', tags: ['x'],
+    categoria_id_publicada: 'c2', categoria_publicada: 'Retorno', titulo_publicado: 'Publicado',
+    conteudo_publicado: 'Texto publicado', tags_publicadas: ['y'],
+    titulo_anterior: null, criado_em: '2026-09-10T12:00:00Z',
+  });
+  assert.strictEqual(detail.previous, null);
+  assert.deepStrictEqual(detail.proposed, { categoryId: 'c1', category: 'Cobrança', title: 'Enviado', content: 'Texto enviado', tags: ['x'] });
+  assert.deepStrictEqual(detail.published, { categoryId: 'c2', category: 'Retorno', title: 'Publicado', content: 'Texto publicado', tags: ['y'] });
+  assert.strictEqual(detail.showComparison, true);
+  assert.strictEqual(detail.statusLabel, 'Aprovada com ajustes');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

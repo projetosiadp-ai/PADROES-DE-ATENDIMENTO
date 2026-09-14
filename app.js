@@ -3,7 +3,10 @@ import * as api from './api.js';
 import { matchesSearch, titleSegments as titleSegmentsPure, pickActiveAcesso } from './search-utils.mjs';
 import { normalizeTags, paginateLibraryMessages, selectLibraryMessages } from './domain/library.mjs';
 import { canPublishContent, canUseAccess, canViewAdministration } from './domain/permissions.mjs';
-import { getOrCreateIdempotencyKey, isArchiveRequest, requestTypeLabel } from './domain/requests.mjs';
+import {
+  REQUEST_HISTORY_STATUS_FILTERS, REQUEST_HISTORY_STATUS_LABELS, REQUEST_TYPE_LABELS,
+  getOrCreateIdempotencyKey, isArchiveRequest, requestTypeLabel, reviewCommentError,
+} from './domain/requests.mjs';
 import { resolveErrorPolicy } from './domain/error-policy.mjs';
 import { greetingFor } from './domain/greeting.mjs';
 import { extractVariables, fillVariables, insertAtCursor, variableLabel, variableSegments, variablesStatus } from './domain/variables.mjs';
@@ -17,6 +20,7 @@ import { renderLibraryOverview, renderLibraryReadingDialog, renderLibraryView, v
 import { renderBrandBand, renderCategoryPills, renderLoginView, renderNoAccessView, renderReleaseNotesDialog } from './views/shell-view.mjs';
 import { renderAdminConfirmationModal, renderDialog, renderMessageEditorModal, renderMessageRequestModal, renderStructuralModals } from './views/modal-view.mjs';
 import { renderAdminView } from './views/admin-view.mjs';
+import { renderMyRequests } from './views/requests-view.mjs';
 
 const esc = (s) => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -33,6 +37,18 @@ const CLOSED_ACCESS_USERS = Object.freeze({
   profiles: Object.freeze([]), selectedId: '', error: '',
 });
 const EMPTY_VARIABLES = Object.freeze({ messageId: null, values: Object.freeze({}) });
+// Etapa 5: "Suas solicitações" e histórico. Carregados sob demanda, só em memória.
+const MY_REQUESTS_PAGE_SIZE = 20;
+const HISTORY_PAGE_SIZE = 25;
+const EMPTY_MY_REQUESTS = Object.freeze({
+  loaded: false, loading: false, error: '', items: Object.freeze([]), total: 0, page: 0,
+  selectedId: null, detail: null, detailLoading: false, detailError: '',
+});
+const EMPTY_HISTORY_FILTERS = Object.freeze({ status: '', type: '', accessId: '', requesterId: '', from: '', to: '' });
+const EMPTY_HISTORY = Object.freeze({
+  loaded: false, loading: false, error: '', items: Object.freeze([]), total: 0, page: 0, filters: EMPTY_HISTORY_FILTERS,
+});
+const dateLabel = (iso) => iso ? new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '';
 const EMPTY_MSG_FORM = Object.freeze({ categoryId: '', title: '', tagInput: '', tags: Object.freeze([]), content: '' });
 
 // Earlier builds persisted whole libraries in sessionStorage. Content now lives only in memory.
@@ -113,8 +129,12 @@ class App {
       showApprovalPopup: false,
       approvalPopupSeenThisSession: false,
       viewingSolicitacaoId: null,
-      solicitacaoRejectMode: false, rejectMotivo: '',
+      solicitacaoRejectMode: false, reviewComment: '',
+      // "Editar e aprovar" (Etapa 5): formulário da versão publicada e categorias do acesso do pedido.
+      reviewAdjustMode: false, reviewAdjustForm: null, reviewCategories: [], reviewCategoriesLoading: false,
       reviewSaving: false, reviewError: '', reviewInvalid: [],
+      myRequests: EMPTY_MY_REQUESTS,
+      requestHistory: EMPTY_HISTORY,
       archivedMessages: [], archivedCategories: [], archivedLoading: false,
       loginEmail: '', loginPassword: '', loginError: '', loggingIn: false, showLoginPassword: false
     };
@@ -912,8 +932,11 @@ class App {
       };
     });
 
-    const appView = (st.appView === 'admin' && !isSuperAdmin) ? 'biblioteca' : (st.appView || 'biblioteca');
-    const pageTitles = { biblioteca: 'Biblioteca de mensagens', visaogeral: 'Visão geral', admin: 'Administração' };
+    // "Suas solicitações" é do colaborador; a Administração, do superadministrador.
+    const appView = (st.appView === 'admin' && !isSuperAdmin) || (st.appView === 'solicitacoes' && isSuperAdmin)
+      ? 'biblioteca'
+      : (st.appView || 'biblioteca');
+    const pageTitles = { biblioteca: 'Biblioteca de mensagens', visaogeral: 'Visão geral', solicitacoes: 'Suas solicitações', admin: 'Administração' };
     const favoritesCount = acessoMsgs.filter(m => st.favoriteIds.includes(m.id)).length;
     // Estado lido pelos atalhos de teclado da Biblioteca (handleLibraryShortcut).
     if (appView === 'biblioteca') {
@@ -942,7 +965,63 @@ class App {
       arquivados: { title: 'Conteúdo', summary: 'Mensagens e categorias arquivadas podem ser restauradas pelo mesmo registro.', actions: 'content' },
       contas: { title: 'Contas e acessos', summary: `${plural(accountRows.length, 'conta', 'contas')} · ${plural(st.acessos.length, 'acesso', 'acessos')} · ${plural(accountRows.filter(row => row.withoutAccess).length, 'conta sem vínculo', 'contas sem vínculo')}`, actions: 'people' },
       acessos: { title: 'Contas e acessos', summary: `${plural(st.acessos.length, 'acesso', 'acessos')} · ${plural(st.acessos.filter(access => access.ativo).length, 'ativo', 'ativos')}`, actions: 'people' },
+      historico: { title: 'Histórico', summary: 'Todas as solicitações, pendentes e decididas, com a decisão e o comentário.', actions: [] },
     }[adminTab];
+
+    // Etapa 5: listas paginadas com "Anterior" e "Próxima".
+    const pagination = (state, pageSize, load) => {
+      const pageCount = Math.max(1, Math.ceil(state.total / pageSize));
+      return {
+        pageLabel: `Página ${state.page + 1} de ${pageCount}`,
+        hasPrevious: state.page > 0 && !state.loading,
+        hasNext: state.page + 1 < pageCount && !state.loading,
+        onPrevious: () => load(state.page - 1),
+        onNext: () => load(state.page + 1),
+      };
+    };
+    const myRequests = st.myRequests;
+    const myDetail = myRequests.detail;
+    const myRequestsView = {
+      loading: myRequests.loading, error: myRequests.error, onRetry: () => this.loadMyRequests(),
+      rows: myRequests.items.map(item => ({
+        id: item.id, typeLabel: requestTypeLabel(item.type), title: item.title, accessName: item.accessName,
+        createdLabel: dateLabel(item.createdAt), reviewedLabel: dateLabel(item.reviewedAt),
+        status: item.status, statusLabel: item.statusLabel, selected: item.id === myRequests.selectedId,
+        onOpen: () => this.openMyRequest(item.id),
+      })),
+      ...pagination(myRequests, MY_REQUESTS_PAGE_SIZE, page => this.loadMyRequests(page)),
+      detail: myDetail ? {
+        typeLabel: requestTypeLabel(myDetail.type), accessName: myDetail.accessName, title: myDetail.title,
+        status: myDetail.status, statusLabel: myDetail.statusLabel,
+        createdLabel: dateLabel(myDetail.createdAt), reviewedLabel: dateLabel(myDetail.reviewedAt),
+        comment: myDetail.comment, showComparison: myDetail.showComparison, isArchive: isArchiveRequest(myDetail.type),
+        proposed: myDetail.proposed, published: myDetail.published, previous: myDetail.previous,
+      } : null,
+      detailLoading: myRequests.detailLoading, detailError: myRequests.detailError,
+    };
+    const history = st.requestHistory;
+    const requestHistoryView = {
+      loading: history.loading, error: history.error, onRetry: () => this.loadRequestHistory(),
+      filters: history.filters,
+      statusOptions: [['', 'Todas'], ...REQUEST_HISTORY_STATUS_FILTERS.map(value => [value, REQUEST_HISTORY_STATUS_LABELS[value]])],
+      typeOptions: [['', 'Todos'], ...Object.entries(REQUEST_TYPE_LABELS)],
+      accessOptions: [['', 'Todos'], ...st.acessos.map(access => [access.id, access.nome])],
+      requesterOptions: [['', 'Todas as pessoas'], ...st.adminProfiles.map(person => [person.id, person.nome || person.email])],
+      onFilter: (field) => (event) => this.setHistoryFilter(field, event.target.value),
+      onClearFilters: () => this.clearHistoryFilters(),
+      totalLabel: history.total ? plural(history.total, 'solicitação encontrada', 'solicitações encontradas') : 'Nenhuma solicitação encontrada',
+      rows: history.items.map(item => ({
+        id: item.id, title: item.title, typeLabel: requestTypeLabel(item.type), accessName: item.accessName,
+        requesterName: item.requesterName, createdLabel: dateLabel(item.createdAt),
+        status: item.status, statusLabel: item.statusLabel,
+        decisionLabel: item.reviewedAt ? `${item.reviewerName ?? '—'} · ${dateLabel(item.reviewedAt)}` : '',
+        comment: item.comment,
+      })),
+      ...pagination(history, HISTORY_PAGE_SIZE, page => this.loadRequestHistory(page)),
+    };
+    const myRequestsSummary = myRequests.loaded
+      ? `${plural(myRequests.total, 'solicitação enviada', 'solicitações enviadas')} · o retorno do superadministrador aparece aqui`
+      : 'O retorno do superadministrador aparece aqui.';
     const bandActions = adminBand.actions === 'content'
       ? [{ label: 'Nova mensagem', onClick: () => this.openCreateMsg(), primary: true }, { label: 'Nova categoria', onClick: () => this.openCreateCat() }]
       : adminBand.actions === 'people'
@@ -954,16 +1033,21 @@ class App {
       appView,
       pageTitle: pageTitles[appView],
       isLib: appView === 'biblioteca', isOver: appView === 'visaogeral', isAdminView: appView === 'admin',
+      isMyRequests: appView === 'solicitacoes',
+      myRequestsView, requestHistoryView,
+      onOpenMyRequests: isSuperAdmin ? null : () => this.openMyRequests(),
       isAdminMsgs: adminTab === 'mensagens', isAdminCats: adminTab === 'categorias', isAdminAcessos: adminTab === 'acessos',
       isAdminAccounts: adminTab === 'contas',
       isAdminSolicitacoes: adminTab === 'solicitacoes',
       isAdminArchived: adminTab === 'arquivados',
+      isAdminHistory: adminTab === 'historico',
       isSuperAdmin, isAdminNow: isSuperAdmin,
       // Trocar de seção fecha o menu da conta e desfaz a seleção: no celular a leitura é um
       // diálogo, e ele não pode sobreviver à navegação.
       navItems: [
         { label: 'Biblioteca', current: appView === 'biblioteca', onClick: () => this.setState({ appView: 'biblioteca', userMenuOpen: false, selectedMessageId: null }) },
         { label: 'Visão geral', current: appView === 'visaogeral', onClick: () => this.setState({ appView: 'visaogeral', userMenuOpen: false, selectedMessageId: null }) },
+        ...(!isSuperAdmin ? [{ label: 'Suas solicitações', current: appView === 'solicitacoes', onClick: () => this.openMyRequests() }] : []),
         ...(isSuperAdmin ? [{
           label: 'Administração',
           current: appView === 'admin',
@@ -975,10 +1059,12 @@ class App {
           },
         }] : []),
       ],
-      bandTitle: appView === 'admin' ? adminBand.title : heroGreeting,
+      bandTitle: appView === 'admin' ? adminBand.title : appView === 'solicitacoes' ? 'Suas solicitações' : heroGreeting,
       bandSummary: appView === 'admin'
         ? adminBand.summary
-        : `${plural(acessoMsgs.length, 'padrão disponível', 'padrões disponíveis')} · ${plural(favoritesCount, 'favorita', 'favoritas')}`,
+        : appView === 'solicitacoes'
+          ? myRequestsSummary
+          : `${plural(acessoMsgs.length, 'padrão disponível', 'padrões disponíveis')} · ${plural(favoritesCount, 'favorita', 'favoritas')}`,
       bandActions: appView === 'admin' ? bandActions : [],
       // FR-001: "Acesso" para quem usa a biblioteca, "Operando em" na Administração.
       accessSelectLabel: appView === 'admin' ? 'Operando em' : 'Acesso',
@@ -995,6 +1081,7 @@ class App {
       setAdminTabAccounts: () => { this.setState({ adminTab: 'contas' }); void this.loadStructuralAdmin(); },
       setAdminTabSolicitacoes: () => this.setState({ adminTab: 'solicitacoes' }),
       setAdminTabArchived: () => this.openArchivedAdmin(),
+      setAdminTabHistory: () => this.openHistoryAdmin(),
 
       solicitacoesCount: st.solicitacoesPendentes.length,
       goApprovals: () => this.setState({ appView: 'admin', adminTab: 'solicitacoes', showApprovalPopup: false, userMenuOpen: false }),
@@ -1243,12 +1330,21 @@ class App {
         previousTitle: selectedRequest.titulo_anterior, title: selectedRequest.titulo,
         previousContent: selectedRequest.conteudo_anterior, content: selectedRequest.conteudo,
         tags: Array.isArray(selectedRequest.tags) ? selectedRequest.tags : [],
-        rejectMode: st.solicitacaoRejectMode, reason: st.rejectMotivo,
+        rejectMode: st.solicitacaoRejectMode, comment: st.reviewComment,
         saving: st.reviewSaving, error: st.reviewError, invalid: st.reviewInvalid,
-        onStartReject: () => this.setState({ solicitacaoRejectMode: true, reviewError: '', reviewInvalid: [] }),
-        onCancelReject: () => { if (!this.state.reviewSaving) this.setState({ solicitacaoRejectMode: false, rejectMotivo: '', reviewError: '', reviewInvalid: [] }); },
-        onReasonChange: (e) => this.setState({ rejectMotivo: e.target.value, reviewError: '', reviewInvalid: [] }),
+        canAdjust: !isArchiveRequest(selectedRequest.tipo),
+        adjustMode: st.reviewAdjustMode, adjustForm: st.reviewAdjustForm,
+        adjustCategories: st.reviewCategories, adjustLoading: st.reviewCategoriesLoading,
+        onStartReject: () => { if (!this.state.reviewSaving) this.setState({ solicitacaoRejectMode: true, reviewAdjustMode: false, reviewError: '', reviewInvalid: [] }); },
+        onCancelReject: () => { if (!this.state.reviewSaving) this.setState({ solicitacaoRejectMode: false, reviewError: '', reviewInvalid: [] }); },
+        onCommentChange: (e) => this.setState({ reviewComment: e.target.value, reviewError: '', reviewInvalid: [] }),
+        onStartAdjust: () => this.startReviewAdjust(),
+        onCancelAdjust: () => { if (!this.state.reviewSaving) this.setState({ reviewAdjustMode: false, reviewAdjustForm: null, reviewError: '', reviewInvalid: [] }); },
+        onAdjustField: (field) => (e) => this.setState(s => ({
+          reviewAdjustForm: { ...s.reviewAdjustForm, [field]: e.target.value }, reviewError: '', reviewInvalid: [],
+        })),
         onApprove: () => this.approveReviewedRequest(),
+        onApproveAdjusted: () => this.approveReviewedRequest({ adjusted: true }),
         onReject: () => this.rejectReviewedRequest(),
       } : null,
       archivedLoading: st.archivedLoading,
@@ -1439,7 +1535,8 @@ class App {
         content: form.content.trim() || null,
         previous: request.previous
       });
-      this.setState({ requestSaving: false });
+      // A próxima abertura de "Suas solicitações" busca de novo e mostra o pedido recém-enviado.
+      this.setState({ requestSaving: false, myRequests: EMPTY_MY_REQUESTS });
       this.closeMessageRequest();
       this.showToast('Proposta enviada para revisão', 'success');
     } catch (error) {
@@ -1541,10 +1638,39 @@ class App {
   // Tela 06: escolher uma solicitação só troca o painel lateral; a mais antiga vem selecionada.
   openReview(requestId) {
     if (this.state.reviewSaving) return;
+    this.setState({ viewingSolicitacaoId: requestId, ...this.closedReviewForm() });
+  }
+  closedReviewForm() {
+    return {
+      solicitacaoRejectMode: false, reviewComment: '', reviewError: '', reviewInvalid: [],
+      reviewAdjustMode: false, reviewAdjustForm: null,
+    };
+  }
+  // "Editar e aprovar": parte da versão enviada; as categorias vêm do acesso do pedido, que pode
+  // não ser o acesso ativo.
+  async startReviewAdjust() {
+    const request = this.selectedRequest();
+    if (!request || this.state.reviewSaving || isArchiveRequest(request.tipo)) return;
+    const localCategories = request.acesso_id === this.state.activeAcessoId
+      ? this.state.categorias.filter(category => category.acesso_id === request.acesso_id)
+      : null;
     this.setState({
-      viewingSolicitacaoId: requestId,
-      solicitacaoRejectMode: false, rejectMotivo: '', reviewError: '', reviewInvalid: [],
+      solicitacaoRejectMode: false, reviewAdjustMode: true, reviewError: '', reviewInvalid: [],
+      reviewAdjustForm: {
+        categoryId: request.categoria_id ?? '', title: request.titulo ?? '',
+        tagsText: (request.tags ?? []).join(', '), content: request.conteudo ?? '',
+      },
+      reviewCategories: localCategories ?? [], reviewCategoriesLoading: !localCategories,
     });
+    if (localCategories) return;
+    try {
+      const { categories } = await api.fetchAccessLibraryCore(request.acesso_id);
+      if (this.selectedRequest()?.id !== request.id) return;
+      this.setState({ reviewCategories: categories, reviewCategoriesLoading: false });
+    } catch (error) {
+      this.setState({ reviewCategoriesLoading: false, reviewAdjustMode: false, reviewAdjustForm: null });
+      await this.handleReviewError(error, request);
+    }
   }
   selectedRequest() {
     const pending = this.state.solicitacoesPendentes;
@@ -1563,16 +1689,44 @@ class App {
       this.showToast('Esta solicitação já foi revisada. Recarregamos o estado atual.', 'error');
     }
   }
-  async approveReviewedRequest() {
-    if (this.state.reviewSaving) return;
+  async approveReviewedRequest({ adjusted = false } = {}) {
+    if (this.state.reviewSaving || this.state.reviewCategoriesLoading) return;
     const request = this.selectedRequest();
     if (!request) return;
+    const commentError = reviewCommentError(this.state.reviewComment);
+    let adjustments = null;
+    const invalid = commentError ? ['comment'] : [];
+    let formError = commentError;
+    if (adjusted) {
+      const form = this.state.reviewAdjustForm ?? {};
+      adjustments = {
+        categoryId: form.categoryId, title: String(form.title ?? '').trim(),
+        tags: normalizeTags(form.tagsText ?? ''), content: String(form.content ?? '').trim(),
+      };
+      const fieldInvalid = [
+        !adjustments.categoryId && 'adjustCategory',
+        (!adjustments.title || adjustments.title.length > 100) && 'adjustTitle',
+        (!adjustments.content || adjustments.content.length > 2000) && 'adjustContent',
+      ].filter(Boolean);
+      if (fieldInvalid.length) {
+        invalid.unshift(...fieldInvalid);
+        formError = 'Revise a versão ajustada: escolha a categoria e preencha título (até 100) e conteúdo (até 2000 caracteres).';
+      }
+    }
+    if (invalid.length) {
+      this.setState({ reviewError: formError, reviewInvalid: invalid });
+      this.focusFirstInvalid();
+      return;
+    }
     this.setState({ reviewSaving: true, reviewError: '' });
     try {
-      await api.approveMessageRequest(request.id);
-      this.setState({ reviewSaving: false, viewingSolicitacaoId: null });
+      const result = await api.approveMessageRequest(request.id, { adjustments, comment: this.state.reviewComment });
+      this.setState(s => ({
+        reviewSaving: false, viewingSolicitacaoId: null, ...this.closedReviewForm(),
+        requestHistory: { ...s.requestHistory, loaded: false },
+      }));
       await Promise.all([this.reloadLibrary(request.acesso_id), this.reloadPendingRequests()]);
-      this.showToast('Solicitação aprovada.', 'success');
+      this.showToast(result.adjusted ? 'Solicitação aprovada com ajustes.' : 'Solicitação aprovada.', 'success');
     } catch (error) {
       this.setState({ reviewSaving: false });
       await this.handleReviewError(error, request);
@@ -1582,22 +1736,101 @@ class App {
     if (this.state.reviewSaving) return;
     const request = this.selectedRequest();
     if (!request) return;
-    const reason = this.state.rejectMotivo.trim();
-    if (!reason || reason.length > 500) {
-      this.setState({ reviewError: 'Informe um motivo de 1 a 500 caracteres.', reviewInvalid: ['reason'] });
+    const reason = this.state.reviewComment.trim();
+    const reasonError = reviewCommentError(reason, { required: true });
+    if (reasonError) {
+      this.setState({ reviewError: reasonError, reviewInvalid: ['comment'] });
       this.focusFirstInvalid();
       return;
     }
     this.setState({ reviewSaving: true, reviewError: '' });
     try {
       await api.rejectMessageRequest(request.id, reason);
-      this.setState({ reviewSaving: false, viewingSolicitacaoId: null, solicitacaoRejectMode: false, rejectMotivo: '' });
+      this.setState(s => ({
+        reviewSaving: false, viewingSolicitacaoId: null, ...this.closedReviewForm(),
+        requestHistory: { ...s.requestHistory, loaded: false },
+      }));
       await this.reloadPendingRequests();
       this.showToast('Solicitação rejeitada.', 'success');
     } catch (error) {
       this.setState({ reviewSaving: false });
       await this.handleReviewError(error, request);
     }
+  }
+
+  /* Etapa 5: "Suas solicitações" (colaborador) e histórico (superadministrador) */
+
+  openMyRequests() {
+    this.setState({ appView: 'solicitacoes', userMenuOpen: false, selectedMessageId: null });
+    const { loaded, loading } = this.state.myRequests;
+    if (!loaded && !loading) void this.loadMyRequests(0);
+  }
+  patchMyRequests(patch) {
+    this.setState(s => ({ myRequests: { ...s.myRequests, ...patch } }));
+  }
+  async loadMyRequests(page = this.state.myRequests.page) {
+    const sequence = this._myRequestsSequence = (this._myRequestsSequence ?? 0) + 1;
+    this.patchMyRequests({ loading: true, error: '' });
+    try {
+      const { items, total } = await api.listMyRequests({ page, pageSize: MY_REQUESTS_PAGE_SIZE });
+      if (sequence !== this._myRequestsSequence) return;
+      const current = this.state.myRequests.selectedId;
+      const keep = items.some(item => item.id === current);
+      const selectedId = keep ? current : (items[0]?.id ?? null);
+      this.patchMyRequests({ loaded: true, loading: false, items, total, page, selectedId, ...(keep ? {} : { detail: null }) });
+      if (selectedId && !keep) void this.openMyRequest(selectedId);
+      else if (keep) void this.openMyRequest(current);
+    } catch (error) {
+      if (sequence !== this._myRequestsSequence) return;
+      this.patchMyRequests({ loading: false });
+      await this.handleError(error, { refresh: false, setFormError: message => this.patchMyRequests({ error: message }) });
+    }
+  }
+  async openMyRequest(requestId) {
+    const sequence = this._myRequestDetailSequence = (this._myRequestDetailSequence ?? 0) + 1;
+    this.patchMyRequests({ selectedId: requestId, detailLoading: true, detailError: '' });
+    try {
+      const detail = await api.getRequestDetail(requestId);
+      if (sequence !== this._myRequestDetailSequence) return;
+      this.patchMyRequests({ detail, detailLoading: false });
+    } catch (error) {
+      if (sequence !== this._myRequestDetailSequence) return;
+      this.patchMyRequests({ detail: null, detailLoading: false });
+      await this.handleError(error, { refresh: false, setFormError: message => this.patchMyRequests({ detailError: message }) });
+    }
+  }
+
+  openHistoryAdmin() {
+    this.setState({ adminTab: 'historico' });
+    void this.loadStructuralAdmin();
+    const { loaded, loading } = this.state.requestHistory;
+    if (!loaded && !loading) void this.loadRequestHistory(0);
+  }
+  patchRequestHistory(patch) {
+    this.setState(s => ({ requestHistory: { ...s.requestHistory, ...patch } }));
+  }
+  async loadRequestHistory(page = this.state.requestHistory.page) {
+    if (!this.isSuperAdmin()) return;
+    const sequence = this._historySequence = (this._historySequence ?? 0) + 1;
+    const { filters } = this.state.requestHistory;
+    this.patchRequestHistory({ loading: true, error: '' });
+    try {
+      const { items, total } = await api.listRequestHistory({ ...filters, page, pageSize: HISTORY_PAGE_SIZE });
+      if (sequence !== this._historySequence) return;
+      this.patchRequestHistory({ loaded: true, loading: false, items, total, page });
+    } catch (error) {
+      if (sequence !== this._historySequence) return;
+      this.patchRequestHistory({ loading: false });
+      await this.handleError(error, { refresh: false, setFormError: message => this.patchRequestHistory({ error: message }) });
+    }
+  }
+  setHistoryFilter(field, value) {
+    this.setState(s => ({ requestHistory: { ...s.requestHistory, filters: { ...s.requestHistory.filters, [field]: value } } }));
+    void this.loadRequestHistory(0);
+  }
+  clearHistoryFilters() {
+    this.patchRequestHistory({ filters: EMPTY_HISTORY_FILTERS });
+    void this.loadRequestHistory(0);
   }
 
   /* categories */
@@ -1913,6 +2146,7 @@ class App {
       if (v.isLib) body += renderCategoryPills(v, H);
       if (v.isLib) body += this.viewLibrary(v, H);
       if (v.isOver) body += this.viewVisaoGeral(v, H);
+      if (v.isMyRequests) body += renderMyRequests(v.myRequestsView, H);
       if (v.isAdminView) body += this.viewAdmin(v, H);
       body += renderLibraryReadingDialog(v, H);
     }

@@ -1,10 +1,22 @@
 // api.js
 // Data access layer: the only module that talks to Supabase. Its exported surface is
-// exactly specs/001-evoluir-biblioteca-mensagens/contracts/data-access.md, enforced by
+// exactly specs/001-evoluir-biblioteca-mensagens/contracts/data-access.md plus the Etapa 5
+// section of specs/002-layout-visual-design-2/contracts/data-access.md, enforced by
 // tests/data-access-contract.test.mjs.
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
 import { APP_ERROR_CODES, AppError, normalizeApiError } from './domain/api-errors.mjs';
-import { REQUEST_TYPES } from './domain/requests.mjs';
+import { normalizeTags } from './domain/library.mjs';
+import {
+  REQUEST_TYPES,
+  historyDateBounds,
+  isArchiveRequest,
+  normalizeReviewComment,
+  requestStatusFilter,
+  reviewCommentError,
+  toAdjustmentsPayload,
+  toRequestDetail,
+  toRequestSummary,
+} from './domain/requests.mjs';
 
 export { APP_ERROR_CODES, AppError, normalizeApiError };
 
@@ -271,11 +283,31 @@ export async function listPendingRequests() {
   return data;
 }
 
-export async function approveMessageRequest(requestId) {
+// Etapa 5: ajustes e comentário vão na mesma chamada transacional; sem o segundo argumento
+// o comportamento é o da versão anterior.
+export async function approveMessageRequest(requestId, { adjustments = null, comment = null } = {}) {
   if (!requestId) throw new AppError('VALIDATION');
-  const { data, error } = await supabase.rpc('aprovar_solicitacao', { p_id: requestId }).single();
+  if (reviewCommentError(comment)) {
+    throw new AppError('VALIDATION', undefined, { details: { reason: 'REVIEW_COMMENT' } });
+  }
+  const payload = toAdjustmentsPayload(adjustments);
+  if (payload) {
+    const tags = normalizeTags(payload.tags);
+    if (!payload.categoria_id) throw new AppError('VALIDATION', undefined, { details: { reason: 'CATEGORY_NOT_ACTIVE_IN_ACCESS' } });
+    if (payload.titulo.length < 1 || payload.titulo.length > 100) throw new AppError('VALIDATION', undefined, { details: { reason: 'TITLE' } });
+    if (payload.conteudo.length < 1 || payload.conteudo.length > 2000) throw new AppError('VALIDATION', undefined, { details: { reason: 'CONTENT' } });
+    payload.tags = tags;
+  }
+
+  const { data, error } = await supabase
+    .rpc('aprovar_solicitacao', {
+      p_id: requestId,
+      p_ajustes: payload,
+      p_comentario: normalizeReviewComment(comment),
+    })
+    .single();
   if (error) fail('Não foi possível aprovar a solicitação', error);
-  return data;
+  return { requestId: data.request_id, status: data.status, messageId: data.message_id, adjusted: data.ajustada === true };
 }
 
 export async function rejectMessageRequest(requestId, reason) {
@@ -288,6 +320,75 @@ export async function rejectMessageRequest(requestId, reason) {
     .single();
   if (error) fail('Não foi possível rejeitar a solicitação', error);
   return data;
+}
+
+const REQUEST_LIST_COLUMNS = 'id, tipo, status, ajustada, titulo, titulo_publicado, titulo_anterior, acesso_id, '
+  + 'criado_em, revisado_em, comentario_revisao, motivo_rejeicao, acessos(nome)';
+const REQUEST_NAMES = 'solicitante:profiles!solicitacoes_mensagem_solicitado_por_fkey(nome), '
+  + 'revisor:profiles!solicitacoes_mensagem_revisado_por_fkey(nome)';
+
+function pageRange(page, pageSize) {
+  const size = Math.max(1, Math.min(100, Number(pageSize) || 20));
+  const from = Math.max(0, Number(page) || 0) * size;
+  return [from, from + size - 1];
+}
+
+// "Suas solicitações": só as do usuário atual, sem nomes de solicitante e revisor (a leitura
+// de profiles do colaborador se limita ao próprio perfil).
+export async function listMyRequests({ page = 0, pageSize = 20 } = {}) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const userId = session?.user?.id;
+  if (!userId) throw new AppError('AUTH_REQUIRED');
+  const [from, to] = pageRange(page, pageSize);
+  const { data, error, count } = await supabase
+    .from('solicitacoes_mensagem')
+    .select(REQUEST_LIST_COLUMNS, { count: 'exact' })
+    .eq('solicitado_por', userId)
+    .order('criado_em', { ascending: false })
+    .order('id', { ascending: false })
+    .range(from, to);
+  if (error) fail('Não foi possível carregar suas solicitações', error);
+  return { items: data.map(toRequestSummary), total: count ?? data.length };
+}
+
+export async function listRequestHistory({ status, type, accessId, requesterId, from, to, page = 0, pageSize = 25 } = {}) {
+  let statusFilter;
+  let bounds;
+  try {
+    statusFilter = requestStatusFilter(status);
+    bounds = historyDateBounds({ from, to });
+  } catch (error) {
+    throw new AppError('VALIDATION', undefined, { cause: error });
+  }
+  const [rangeFrom, rangeTo] = pageRange(page, pageSize);
+  let query = supabase
+    .from('solicitacoes_mensagem')
+    .select(`${REQUEST_LIST_COLUMNS}, ${REQUEST_NAMES}`, { count: 'exact' });
+  if (statusFilter.status) query = query.eq('status', statusFilter.status);
+  if (statusFilter.adjusted !== null) query = query.eq('ajustada', statusFilter.adjusted);
+  if (type) query = query.in('tipo', isArchiveRequest(type) ? ['arquivamento', 'exclusao'] : [type]);
+  if (accessId) query = query.eq('acesso_id', accessId);
+  if (requesterId) query = query.eq('solicitado_por', requesterId);
+  if (bounds.gte) query = query.gte('criado_em', bounds.gte);
+  if (bounds.lt) query = query.lt('criado_em', bounds.lt);
+  const { data, error, count } = await query
+    .order('criado_em', { ascending: false })
+    .order('id', { ascending: false })
+    .range(rangeFrom, rangeTo);
+  if (error) fail('Não foi possível carregar o histórico de solicitações', error);
+  return { items: data.map(toRequestSummary), total: count ?? data.length };
+}
+
+export async function getRequestDetail(requestId) {
+  if (!requestId) throw new AppError('VALIDATION');
+  const { data, error } = await supabase
+    .from('solicitacoes_mensagem')
+    .select(`*, acessos(nome), ${REQUEST_NAMES}`)
+    .eq('id', requestId)
+    .maybeSingle();
+  if (error) fail('Não foi possível abrir a solicitação', error);
+  if (!data) throw new AppError('NOT_FOUND');
+  return toRequestDetail(data);
 }
 
 /* ---------------- superadministrator content operations ---------------- */

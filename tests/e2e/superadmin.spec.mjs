@@ -39,7 +39,7 @@ test('superadministrador aprova e rejeita propostas com decisão persistida', as
   await createPendingProposal(page, approvedTitle);
   await openPendingRequests(page);
   let dialog = await openNewestRequest(page, approvedTitle);
-  await dialog.getByRole('button', { name: 'Aprovar' }).click();
+  await dialog.getByRole('button', { name: 'Aprovar e publicar' }).click();
   await expect(page.getByText('Solicitação aprovada.')).toBeVisible();
 
   await logout(page);
@@ -67,8 +67,8 @@ test('duas revisões concorrentes aplicam a proposta no máximo uma vez', async 
   const firstDialog = await openNewestRequest(page, title);
   const secondDialog = await openNewestRequest(secondPage, title);
   await Promise.all([
-    firstDialog.getByRole('button', { name: 'Aprovar' }).click(),
-    secondDialog.getByRole('button', { name: 'Aprovar' }).click(),
+    firstDialog.getByRole('button', { name: 'Aprovar e publicar' }).click(),
+    secondDialog.getByRole('button', { name: 'Aprovar e publicar' }).click(),
   ]);
 
   await expect.poll(async () => await page.getByText('Solicitação aprovada.').count()

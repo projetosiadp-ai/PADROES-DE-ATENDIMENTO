@@ -1,3 +1,5 @@
+import { renderRequestHistory } from './requests-view.mjs';
+
 const escapeHtml = (value) => String(value ?? '')
   .replace(/&/g, '&amp;')
   .replace(/</g, '&lt;')
@@ -30,6 +32,7 @@ function tabs(model, register) {
     ['Arquivados', model.isAdminArchived, model.setAdminTabArchived, null],
     ['Acessos', model.isAdminAcessos, model.setAdminTabAcessos, model.acessoRows.length],
     ['Contas', model.isAdminAccounts, model.setAdminTabAccounts, model.accountsLoading ? null : model.accountRows.length],
+    ['Histórico', model.isAdminHistory, model.setAdminTabHistory, null],
   ];
   return `<div class="dp-pills" role="tablist" aria-label="Seções do painel administrativo">
     ${items.map(([label, active, onClick, count]) => `<button type="button" class="dp-pill" role="tab" aria-selected="${active}" data-click="${register(onClick)}">${label}${count != null ? ` <span data-volatile>${count}</span>` : ''}</button>`).join('')}
@@ -53,25 +56,84 @@ function requestPanel(panel, register) {
     ? `${compare('Título', panel.previousTitle, null)}${compare('Conteúdo', panel.previousContent, null)}`
     : `${compare('Categoria', panel.previousCategory, panel.category)}${compare('Título', panel.previousTitle, panel.title)}${compare('Conteúdo', panel.previousContent, panel.content)}`;
 
-  const reject = panel.rejectMode
-    ? `<label class="dp-form-field"><span class="dp-label">Motivo da rejeição</span><textarea class="dp-field" aria-label="Motivo da rejeição" maxlength="500" rows="3" data-input="${register(panel.onReasonChange)}" ${panel.invalid?.includes('reason') ? 'aria-invalid="true" aria-describedby="review-error"' : ''} ${disabled(panel.saving)}>${escapeHtml(panel.reason)}</textarea></label>`
-    : '';
-
+  const saving = panel.saving;
   const buttons = panel.rejectMode
-    ? `${action('Cancelar', panel.onCancelReject, register, { saving: panel.saving })}<span class="dp-band__spacer"></span>${action(panel.saving ? 'Rejeitando…' : 'Confirmar rejeição', panel.onReject, register, { variant: 'danger', saving: panel.saving })}`
-    : `${action('Rejeitar com motivo', panel.onStartReject, register, { variant: 'danger', saving: panel.saving })}<span class="dp-band__spacer"></span>${action(panel.saving ? 'Aprovando…' : 'Aprovar e publicar', panel.onApprove, register, { variant: 'primary', saving: panel.saving })}`;
+    ? `${action('Cancelar', panel.onCancelReject, register, { saving })}<span class="dp-band__spacer"></span>${action(saving ? 'Rejeitando…' : 'Confirmar rejeição', panel.onReject, register, { variant: 'danger', saving })}`
+    : panel.adjustMode
+      ? `${action('Cancelar ajustes', panel.onCancelAdjust, register, { saving })}<span class="dp-band__spacer"></span>${action(saving ? 'Aprovando…' : 'Aprovar com ajustes', panel.onApproveAdjusted, register, { variant: 'primary', saving: saving || panel.adjustLoading })}`
+      : `${action('Rejeitar com motivo', panel.onStartReject, register, { variant: 'danger', saving })}<span class="dp-band__spacer"></span>${panel.canAdjust ? action('Editar e aprovar', panel.onStartAdjust, register, { saving }) : ''}${action(saving ? 'Aprovando…' : 'Aprovar e publicar', panel.onApprove, register, { variant: 'primary', saving })}`;
 
   return `
-    <aside class="dp-panel dp-admin__aside dp-request" aria-label="Solicitação selecionada"${panel.saving ? ' aria-busy="true"' : ''}>
+    <aside class="dp-panel dp-admin__aside dp-request" aria-label="Solicitação selecionada"${saving ? ' aria-busy="true"' : ''}>
       <div class="dp-kicker">${escapeHtml(panel.typeLabel)} · ${escapeHtml(panel.department)}</div>
       <h2 class="dp-request__title">${escapeHtml(panel.title || panel.previousTitle || 'Mensagem')}</h2>
       <div class="dp-hint" data-volatile>Enviada por ${escapeHtml(panel.user)}${panel.dateLabel ? ` · ${escapeHtml(panel.dateLabel)}` : ''}</div>
-      ${fields}
-      ${panel.tags.length ? `<div class="dp-reading__tags">${panel.tags.map(tag => `<span class="dp-chip">#${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
-      ${reject}
+      ${panel.adjustMode ? adjustFields(panel, register) : fields}
+      ${!panel.adjustMode && panel.tags.length ? `<div class="dp-reading__tags">${panel.tags.map(tag => `<span class="dp-chip">#${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+      ${commentField(panel, register)}
       ${panel.error ? `<p id="review-error" role="alert" class="dp-alert">${escapeHtml(panel.error)}</p>` : ''}
       <div class="dp-request__actions">${buttons}</div>
     </aside>`;
+}
+
+/* Contador "N / limite caracteres", anunciado ao leitor de tela só a partir de 90% (R11). */
+const counter = (id, label, value, max) => {
+  const length = String(value ?? '').length;
+  const warning = length >= max
+    ? `${label}: limite de ${max} caracteres atingido.`
+    : length >= Math.ceil(max * 0.9) ? `${label}: perto do limite de ${max} caracteres.` : '';
+  return `<span id="${id}" class="dp-counter${length >= max ? ' dp-counter--full' : ''}">${length} / ${max} caracteres</span>`
+    + `<span class="sr-only" aria-live="polite">${escapeHtml(warning)}</span>`;
+};
+
+const describedBy = (panel, field, ids) => {
+  const isInvalid = panel.invalid?.includes(field);
+  return `${isInvalid ? 'aria-invalid="true" ' : ''}aria-describedby="${[...ids, isInvalid && panel.error ? 'review-error' : null].filter(Boolean).join(' ')}"`;
+};
+
+// Etapa 5: comentário opcional ao aprovar; ao rejeitar, o mesmo campo vira o motivo obrigatório.
+function commentField(panel, register) {
+  const label = panel.rejectMode ? 'Motivo da rejeição' : 'Comentário';
+  const hint = panel.rejectMode
+    ? 'Obrigatório. Quem enviou vê este motivo em Suas solicitações.'
+    : 'Opcional. Quem enviou vê este comentário em Suas solicitações.';
+  return `
+    <div class="dp-form-field">
+      <label for="review-comment" class="dp-label">${label}</label>
+      <textarea class="dp-field" id="review-comment" aria-label="${label}" maxlength="500" rows="3" ${panel.rejectMode ? 'required ' : ''}data-input="${register(panel.onCommentChange)}" ${describedBy(panel, 'comment', ['review-comment-hint', 'review-comment-counter'])} ${disabled(panel.saving)}>${escapeHtml(panel.comment)}</textarea>
+      <span id="review-comment-hint" class="dp-hint">${hint}</span>
+      ${counter('review-comment-counter', label, panel.comment, 500)}
+    </div>`;
+}
+
+// "Editar e aprovar": a versão enviada continua guardada; estes campos formam a versão publicada.
+function adjustFields(panel, register) {
+  const form = panel.adjustForm ?? { categoryId: '', title: '', tagsText: '', content: '' };
+  const options = (panel.adjustCategories ?? [])
+    .map(category => `<option value="${escapeHtml(category.id)}"${category.id === form.categoryId ? ' selected' : ''}>${escapeHtml(category.nome)}</option>`)
+    .join('');
+  const busy = disabled(panel.saving || panel.adjustLoading);
+  return `
+    <p class="dp-hint">A versão enviada fica guardada. Quem pediu verá o que enviou ao lado do que foi publicado.</p>
+    <div class="dp-form-field">
+      <label for="review-adjust-category" class="dp-label">Categoria</label>
+      <select class="dp-field" id="review-adjust-category" data-change="${register(panel.onAdjustField('categoryId'))}" ${describedBy(panel, 'adjustCategory', [])} ${busy}>${panel.adjustLoading ? '<option value="">Carregando…</option>' : options}</select>
+    </div>
+    <div class="dp-form-field">
+      <label for="review-adjust-title" class="dp-label">Título</label>
+      <input class="dp-field" id="review-adjust-title" type="text" maxlength="100" value="${escapeHtml(form.title)}" data-input="${register(panel.onAdjustField('title'))}" ${describedBy(panel, 'adjustTitle', ['review-adjust-title-counter'])} ${busy} />
+      ${counter('review-adjust-title-counter', 'Título', form.title, 100)}
+    </div>
+    <div class="dp-form-field">
+      <label for="review-adjust-tags" class="dp-label">Etiquetas</label>
+      <input class="dp-field" id="review-adjust-tags" type="text" value="${escapeHtml(form.tagsText)}" data-input="${register(panel.onAdjustField('tagsText'))}" aria-describedby="review-adjust-tags-hint" ${busy} />
+      <span id="review-adjust-tags-hint" class="dp-hint">Separe as etiquetas por vírgula.</span>
+    </div>
+    <div class="dp-form-field">
+      <label for="review-adjust-content" class="dp-label">Conteúdo</label>
+      <textarea class="dp-field" id="review-adjust-content" maxlength="2000" rows="6" data-input="${register(panel.onAdjustField('content'))}" ${describedBy(panel, 'adjustContent', ['review-adjust-content-counter'])} ${busy}>${escapeHtml(form.content)}</textarea>
+      ${counter('review-adjust-content-counter', 'Conteúdo', form.content, 2000)}
+    </div>`;
 }
 
 function requests(model, register) {
@@ -231,6 +293,7 @@ export function renderAdminView(model, register) {
   else if (model.isAdminCats) content = categories(model, register);
   else if (model.isAdminArchived) content = archived(model, register);
   else if (model.isAdminAccounts) content = accounts(model, register);
+  else if (model.isAdminHistory) content = renderRequestHistory(model.requestHistoryView, register);
   else content = accesses(model, register);
 
   return `${tabs(model, register)}

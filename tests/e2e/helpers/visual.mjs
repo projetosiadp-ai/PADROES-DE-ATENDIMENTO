@@ -15,4 +15,6 @@ export async function settleVisual(page) {
 // Regiões com valores voláteis (contagens de uso, datas relativas) são mascaradas na comparação.
 export const volatileRegions = (page) => [
   page.locator('[data-volatile]'),
+  // Contador de solicitações pendentes da navegação: cresce a cada jornada que envia pedidos.
+  page.locator('.dp-nav-count'),
 ];

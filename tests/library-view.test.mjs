@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { ICONS } from '../ui/icons.mjs';
-import { renderLibraryReadingDialog, renderLibraryView } from '../views/library-view.mjs';
+import { renderLibraryOverview, renderLibraryReadingDialog, renderLibraryView } from '../views/library-view.mjs';
 
 const register = (() => { let next = 0; return () => `h${next++}`; })();
 const noop = () => {};
@@ -130,4 +130,15 @@ test('abaixo de 900 px a leitura vira diálogo modal com Fechar e foco no títul
 
 test('no computador a coluna de leitura não é diálogo', () => {
   assert.doesNotMatch(view(), /aria-modal="true"/);
+});
+
+test('a Visão geral do colaborador oferece o atalho para Suas solicitações (FR-030)', () => {
+  const handlers = new Map();
+  const register = (fn) => { const key = `k${handlers.size}`; handlers.set(key, fn); return key; };
+  const onOpenMyRequests = () => 'abriu';
+  const html = renderLibraryOverview({ favList: [], recentList: [], onOpenMyRequests }, register);
+  assert.match(html, /aria-labelledby="overview-requests-title"/);
+  const key = html.match(/data-click="([^"]+)"[^>]*>Ver solicitações enviadas</)[1];
+  assert.equal(handlers.get(key)(), 'abriu');
+  assert.doesNotMatch(renderLibraryOverview({ favList: [], recentList: [], onOpenMyRequests: null }, register), /Ver solicitações enviadas/);
 });

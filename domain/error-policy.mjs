@@ -29,6 +29,14 @@ const REASON_MESSAGES = Object.freeze({
     const amount = Number.isInteger(count) ? `${count} ` : '';
     return `Arquive ou reclassifique as ${amount}mensagens ativas desta categoria antes de continuar.`;
   },
+  // Etapa 5: revisão com ajustes (contracts/database-rpcs.md).
+  ADJUSTMENTS_NOT_ALLOWED: () => 'Pedidos de arquivamento só podem ser aprovados ou rejeitados, sem ajustes.',
+  REVIEW_COMMENT: () => 'O comentário deve ter no máximo 500 caracteres.',
+  REJECTION_REASON: () => 'Informe o motivo da rejeição, com até 500 caracteres.',
+  TITLE: () => 'O título deve ter de 1 a 100 caracteres.',
+  CONTENT: () => 'O conteúdo deve ter de 1 a 2000 caracteres.',
+  TAGS: () => 'Revise as etiquetas: não use etiquetas vazias ou repetidas.',
+  CATEGORY_NOT_ACTIVE_IN_ACCESS: () => 'Escolha uma categoria ativa deste acesso.',
 });
 
 export function describeAppError(error) {

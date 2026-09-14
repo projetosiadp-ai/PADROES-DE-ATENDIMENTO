@@ -179,5 +179,13 @@ export function renderLibraryOverview(model, register) {
         ${section('Favoritas', 'clique para copiar', model.favList, 'Marque mensagens com a estrela para vê-las aqui.')}
         ${section('Copiadas recentemente', '', model.recentList, 'Copie uma mensagem e ela aparece aqui.')}
       </div>
+      ${model.onOpenMyRequests ? `
+        <section class="dp-overview__shortcut" role="region" aria-labelledby="overview-requests-title">
+          <div>
+            <h2 id="overview-requests-title">Suas solicitações</h2>
+            <span class="dp-overview__hint">Acompanhe a situação e o retorno dos pedidos que você enviou.</span>
+          </div>
+          <button type="button" class="dp-btn-secondary" data-click="${register(model.onOpenMyRequests)}">Ver solicitações enviadas</button>
+        </section>` : ''}
     </main>`;
 }

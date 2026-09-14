@@ -659,6 +659,16 @@
   overflow-wrap: anywhere;
 }
 
+/* Etapa 5: em telas estreitas a situação desce para baixo do título em vez de espremê-lo. */
+.dp-list-item--wrap {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.dp-list-item--wrap > span:first-child {
+  flex: 1 1 220px;
+}
+
 .dp-list-item__star {
   color: var(--dp-star-off);
   margin-left: auto;
@@ -741,6 +751,25 @@
   display: grid;
   gap: 22px;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/* Etapa 5: atalho da Visão geral para "Suas solicitações" (FR-030). */
+.dp-overview__shortcut {
+  align-items: center;
+  background: var(--dp-surface);
+  border: 1px solid var(--dp-divider-soft);
+  border-radius: var(--dp-radius-md);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  justify-content: space-between;
+  margin-top: 22px;
+  padding: 16px 18px;
+}
+
+.dp-overview__shortcut h2 {
+  font-size: 16px;
+  margin: 0 0 2px;
 }
 
 .dp-overview__heading {
@@ -1662,6 +1691,55 @@
 
 .dp-danger-text {
   color: var(--dp-danger-ink);
+  font-weight: 700;
+}
+
+/* Etapa 5: situação rejeitada, comentário da decisão, filtros e paginação dos históricos. */
+.dp-status--rejected {
+  background: var(--dp-danger-bg);
+  color: var(--dp-danger-ink);
+}
+
+.dp-review-comment {
+  background: var(--dp-bg);
+  border-left: 3px solid var(--dp-cyan-500);
+  border-radius: var(--dp-radius-md);
+  padding: 11px 13px;
+}
+
+.dp-review-comment p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+
+.dp-filters {
+  align-items: end;
+  display: grid;
+  gap: 10px 12px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.dp-filters .dp-form-field {
+  margin: 0;
+}
+
+.dp-filters__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.dp-pager {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  padding-top: 12px;
+}
+
+.dp-pager span {
+  color: var(--dp-text-muted);
+  font-size: 13px;
   font-weight: 700;
 }
 

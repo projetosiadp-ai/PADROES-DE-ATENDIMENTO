@@ -64,6 +64,12 @@ test('@a11y login, aviso de novidades e biblioteca não têm violações axe cr�
   await page.getByRole('button', { name: 'Visão geral' }).click();
   await expect(page.getByTestId('overview-ready')).toBeVisible();
   await expectAccessible(page, 'visão geral');
+
+  // Etapa 5: "Suas solicitações" com o detalhe do pedido mais recente.
+  await page.getByRole('button', { name: 'Suas solicitações', exact: true }).click();
+  await expect(page.getByTestId('my-requests-ready')).toBeVisible();
+  await expect(page.getByText(/Carregando/)).toHaveCount(0);
+  await expectAccessible(page, 'suas solicitações');
 });
 
 test('@a11y mostrar e ocultar a senha funciona pelo teclado', async ({ page }) => {
@@ -95,7 +101,8 @@ test('@a11y diálogos da biblioteca não têm violações axe críticas ou séri
 
   const reading = page.getByRole('region', { name: 'Leitura da mensagem' });
   await reading.getByRole('button', { name: 'Visualizar' }).click();
-  dialog = page.getByRole('dialog', { name: /Visualizar mensagem|Pré-visualizar|Boas-vindas/i });
+  // A primeira mensagem da lista muda com os dados acumulados: a janela é localizada pelo papel.
+  dialog = page.locator(DIALOG);
   await expect(dialog).toBeVisible();
   await expectAccessible(page, 'pré-visualização de mensagem', DIALOG);
   await closeDialog(dialog);
@@ -134,6 +141,19 @@ test('@a11y administração e diálogos estruturais não têm violações axe cr
   await page.getByRole('tab', { name: /Solicitações/ }).click();
   await expect(page.getByRole('complementary', { name: 'Solicitação selecionada' })).toBeVisible();
   await expectAccessible(page, 'solicitações com painel de decisão');
+
+  // Etapa 5: "Editar e aprovar" (quando a primeira pendente é criação ou edição) e histórico.
+  const decisionPanel = page.getByRole('complementary', { name: 'Solicitação selecionada' });
+  const adjust = decisionPanel.getByRole('button', { name: 'Editar e aprovar' });
+  if (await adjust.count()) {
+    await adjust.click();
+    await expect(decisionPanel.getByRole('button', { name: 'Aprovar com ajustes' })).toBeEnabled();
+    await expectAccessible(page, 'editar e aprovar');
+    await decisionPanel.getByRole('button', { name: 'Cancelar ajustes' }).click();
+  }
+  await page.getByRole('tab', { name: 'Histórico' }).click();
+  await expect(page.getByRole('table', { name: 'Histórico de solicitações' })).toBeVisible({ timeout: 15_000 });
+  await expectAccessible(page, 'histórico de solicitações');
   await page.getByRole('tab', { name: 'Mensagens' }).click();
 
   await page.getByRole('button', { name: 'Nova mensagem' }).first().click();

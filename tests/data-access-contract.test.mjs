@@ -22,16 +22,35 @@ function contractFunctions(markdown) {
   return names;
 }
 
-const [apiSource, appSource, contract] = await Promise.all([
+// Seções do contrato da spec 002 já publicadas no código; a Etapa 6 entra quando for implementada.
+function contractSection(markdown, startHeading, endHeading) {
+  const start = markdown.indexOf(startHeading);
+  const end = markdown.indexOf(endHeading, start);
+  assert.ok(start >= 0 && end > start, `seção ${startHeading} não encontrada`);
+  return markdown.slice(start, end);
+}
+
+const [apiSource, appSource, contract, designContract] = await Promise.all([
   read('api.js'),
   read('app.js'),
   read('specs/001-evoluir-biblioteca-mensagens/contracts/data-access.md'),
+  read('specs/002-layout-visual-design-2/contracts/data-access.md'),
 ]);
 const exported = moduleExports(apiSource);
 
 test('api.js exporta exatamente as interfaces de contracts/data-access.md, sem aliases', () => {
-  const expected = [...contractFunctions(contract), ...RE_EXPORTED].sort();
+  const etapa5 = contractSection(designContract, '## Etapa 5', '## Etapa 6');
+  const expected = [...new Set([...contractFunctions(contract), ...contractFunctions(etapa5), ...RE_EXPORTED])].sort();
   assert.deepStrictEqual([...exported].sort(), expected);
+});
+
+test('Etapa 5 acrescenta leituras de solicitações e aprovação com ajustes', () => {
+  for (const name of ['listMyRequests', 'listRequestHistory', 'getRequestDetail']) {
+    assert.ok(exported.has(name), name);
+  }
+  assert.match(apiSource, /export async function approveMessageRequest\(requestId, \{ adjustments = null, comment = null \} = \{\}\)/);
+  assert.match(apiSource, /p_ajustes/);
+  assert.match(apiSource, /p_comentario/);
 });
 
 test('api.js não expõe o cliente remoto nem exclusão física de mensagem ou categoria', () => {

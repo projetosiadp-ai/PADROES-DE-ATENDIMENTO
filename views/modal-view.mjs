@@ -111,7 +111,7 @@ function requestForm(model, register) {
 
   return renderDialog({
     name: model.accessibleName,
-    context: 'Vai para revisão do superadministrador. A biblioteca só muda depois da aprovação.',
+    context: 'Vai para revisão do superadministrador. A biblioteca só muda depois da aprovação; acompanhe o resultado em Suas solicitações.',
     size: 'lg', saving: model.saving, onClose: model.onClose, register, body,
     actions: button('Cancelar', model.onClose, register, { saving: model.saving })
       + button(model.saving ? 'Enviando…' : 'Enviar para revisão', model.onSubmit, register, { variant: 'primary', saving: model.saving }),
@@ -121,7 +121,7 @@ function requestForm(model, register) {
 function archiveConfirmation(model, register) {
   return renderDialog({
     role: 'alertdialog', name: model.accessibleName, size: 'sm', saving: model.saving, onClose: model.onClose, register,
-    body: `<p class="dp-dialog__text">A mensagem continuará publicada até a revisão do superadministrador. Se aprovada, poderá ser restaurada depois.</p>
+    body: `<p class="dp-dialog__text">A mensagem continuará publicada até a revisão do superadministrador. Se aprovada, poderá ser restaurada depois. Acompanhe o resultado em Suas solicitações.</p>
       ${errorMessage(model.error, 'archive-request-error')}`,
     actions: button('Cancelar', model.onClose, register, { saving: model.saving })
       + button(model.saving ? 'Enviando…' : 'Enviar solicitação', model.onSubmit, register, { variant: 'primary', saving: model.saving }),

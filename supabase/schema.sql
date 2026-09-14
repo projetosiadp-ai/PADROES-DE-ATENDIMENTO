@@ -164,16 +164,30 @@ $$;
 ALTER FUNCTION "private"."request_tags_are_valid"("p_tags" "text"[]) OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."aprovar_solicitacao"("p_id" "uuid") RETURNS TABLE("request_id" "uuid", "status" "text", "message_id" "uuid")
+CREATE OR REPLACE FUNCTION "public"."aprovar_solicitacao"("p_id" "uuid", "p_ajustes" "jsonb" DEFAULT NULL::"jsonb", "p_comentario" "text" DEFAULT NULL::"text") RETURNS TABLE("request_id" "uuid", "status" "text", "message_id" "uuid", "ajustada" boolean)
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
     AS $$
+#variable_conflict use_column
 declare
   request_row public.solicitacoes_mensagem;
   applied_message_id uuid;
+  normalized_comment text := nullif(btrim(coalesce(p_comentario, '')), '');
+  final_category_id uuid;
+  final_category_name text;
+  final_title text;
+  final_content text;
+  final_tags text[];
+  was_adjusted boolean := false;
 begin
   if not private.is_superadmin() then
     raise exception using errcode = 'P0001', message = 'FORBIDDEN';
+  end if;
+  if normalized_comment is not null and char_length(normalized_comment) > 500 then
+    raise exception using errcode = 'P0001', message = 'VALIDATION:REVIEW_COMMENT';
+  end if;
+  if p_ajustes is not null and jsonb_typeof(p_ajustes) <> 'object' then
+    raise exception using errcode = 'P0001', message = 'VALIDATION:ADJUSTMENTS';
   end if;
 
   select s.* into request_row
@@ -185,21 +199,82 @@ begin
     raise exception using errcode = 'P0001', message = 'CONFLICT:REQUEST_ALREADY_REVIEWED';
   end if;
 
+  if p_ajustes is not null and request_row.tipo not in ('criacao', 'edicao') then
+    raise exception using errcode = 'P0001', message = 'VALIDATION:ADJUSTMENTS_NOT_ALLOWED';
+  end if;
+
+  if request_row.tipo in ('criacao', 'edicao') then
+    -- Versão final = proposta sobrescrita pelas chaves presentes em p_ajustes.
+    final_category_id := request_row.categoria_id;
+    final_title := btrim(request_row.titulo);
+    final_content := btrim(request_row.conteudo);
+    final_tags := coalesce(request_row.tags, '{}'::text[]);
+
+    if p_ajustes is not null then
+      if p_ajustes ? 'categoria_id' then
+        begin
+          final_category_id := (p_ajustes->>'categoria_id')::uuid;
+        exception when invalid_text_representation then
+          raise exception using errcode = 'P0001', message = 'VALIDATION:CATEGORY_NOT_ACTIVE_IN_ACCESS';
+        end;
+      end if;
+      if p_ajustes ? 'titulo' then
+        final_title := btrim(coalesce(p_ajustes->>'titulo', ''));
+      end if;
+      if p_ajustes ? 'conteudo' then
+        final_content := btrim(coalesce(p_ajustes->>'conteudo', ''));
+      end if;
+      if p_ajustes ? 'tags' then
+        if jsonb_typeof(p_ajustes->'tags') <> 'array' then
+          raise exception using errcode = 'P0001', message = 'VALIDATION:TAGS';
+        end if;
+        select coalesce(array_agg(btrim(item.tag) order by item.position), '{}'::text[])
+        into final_tags
+        from jsonb_array_elements_text(p_ajustes->'tags') with ordinality as item(tag, position);
+      end if;
+    end if;
+
+    if final_title is null or char_length(final_title) not between 1 and 100 then
+      raise exception using errcode = 'P0001', message = 'VALIDATION:TITLE';
+    end if;
+    if final_content is null or char_length(final_content) not between 1 and 2000 then
+      raise exception using errcode = 'P0001', message = 'VALIDATION:CONTENT';
+    end if;
+    if not private.request_tags_are_valid(final_tags) then
+      raise exception using errcode = 'P0001', message = 'VALIDATION:TAGS';
+    end if;
+
+    select c.nome into final_category_name
+    from public.categorias c
+    where c.id = final_category_id
+      and c.acesso_id = request_row.acesso_id
+      and c.arquivado_em is null;
+    if not found then
+      raise exception using errcode = 'P0001', message = 'VALIDATION:CATEGORY_NOT_ACTIVE_IN_ACCESS';
+    end if;
+
+    was_adjusted := p_ajustes is not null and (
+      final_category_id is distinct from request_row.categoria_id
+      or final_title is distinct from btrim(request_row.titulo)
+      or final_content is distinct from btrim(request_row.conteudo)
+      or final_tags is distinct from coalesce(request_row.tags, '{}'::text[])
+    );
+  end if;
+
   if request_row.tipo = 'criacao' then
     insert into public.mensagens (
       acesso_id, categoria_id, categoria, titulo, conteudo, tags, created_by
     ) values (
-      request_row.acesso_id, request_row.categoria_id, request_row.categoria,
-      btrim(request_row.titulo), btrim(request_row.conteudo), coalesce(request_row.tags, '{}'::text[]),
-      (select auth.uid())
+      request_row.acesso_id, final_category_id, final_category_name,
+      final_title, final_content, final_tags, (select auth.uid())
     ) returning id into applied_message_id;
   elsif request_row.tipo = 'edicao' then
     update public.mensagens m
-    set categoria_id = request_row.categoria_id,
-        categoria = request_row.categoria,
-        titulo = btrim(request_row.titulo),
-        conteudo = btrim(request_row.conteudo),
-        tags = coalesce(request_row.tags, '{}'::text[]),
+    set categoria_id = final_category_id,
+        categoria = final_category_name,
+        titulo = final_title,
+        conteudo = final_content,
+        tags = final_tags,
         updated_at = now()
     where m.id = request_row.mensagem_id
       and m.acesso_id = request_row.acesso_id
@@ -233,23 +308,38 @@ begin
   end if;
 
   update public.solicitacoes_mensagem s
-  set status = 'aprovada', mensagem_id = applied_message_id,
-      revisado_por = (select auth.uid()), revisado_em = now(), motivo_rejeicao = null
+  set status = 'aprovada',
+      mensagem_id = applied_message_id,
+      revisado_por = (select auth.uid()),
+      revisado_em = now(),
+      motivo_rejeicao = null,
+      categoria_id_publicada = final_category_id,
+      categoria_publicada = final_category_name,
+      titulo_publicado = final_title,
+      conteudo_publicado = final_content,
+      tags_publicadas = case when request_row.tipo in ('criacao', 'edicao') then final_tags end,
+      ajustada = was_adjusted,
+      comentario_revisao = normalized_comment
   where s.id = p_id;
 
   insert into public.registros_atividade (
     ator_id, acesso_id, entidade_tipo, entidade_id, acao, detalhes
   ) values (
     (select auth.uid()), request_row.acesso_id, 'solicitacao', p_id::text, 'aprovar',
-    jsonb_build_object('tipo', request_row.tipo, 'mensagem_id', applied_message_id)
+    jsonb_build_object(
+      'tipo', request_row.tipo,
+      'mensagem_id', applied_message_id,
+      'ajustada', was_adjusted,
+      'comentario_tamanho', coalesce(char_length(normalized_comment), 0)
+    )
   );
 
-  return query select p_id, 'aprovada'::text, applied_message_id;
+  return query select p_id, 'aprovada'::text, applied_message_id, was_adjusted;
 end;
 $$;
 
 
-ALTER FUNCTION "public"."aprovar_solicitacao"("p_id" "uuid") OWNER TO "postgres";
+ALTER FUNCTION "public"."aprovar_solicitacao"("p_id" "uuid", "p_ajustes" "jsonb", "p_comentario" "text") OWNER TO "postgres";
 
 SET default_tablespace = '';
 
@@ -476,7 +566,8 @@ begin
 
   update public.solicitacoes_mensagem s
   set status = 'rejeitada', revisado_por = (select auth.uid()), revisado_em = now(),
-      motivo_rejeicao = normalized_reason
+      motivo_rejeicao = normalized_reason,
+      comentario_revisao = normalized_reason
   where s.id = p_id;
 
   insert into public.registros_atividade (
@@ -747,7 +838,17 @@ CREATE TABLE IF NOT EXISTS "public"."solicitacoes_mensagem" (
     "idempotency_key" "uuid" NOT NULL,
     "categoria_id" "uuid",
     "categoria_id_anterior" "uuid",
+    "categoria_id_publicada" "uuid",
+    "categoria_publicada" "text",
+    "titulo_publicado" "text",
+    "conteudo_publicado" "text",
+    "tags_publicadas" "text"[],
+    "comentario_revisao" "text",
+    "ajustada" boolean DEFAULT false NOT NULL,
+    CONSTRAINT "solicitacoes_mensagem_ajustada_check" CHECK (((NOT "ajustada") OR (("status" = 'aprovada'::"text") AND ("tipo" = ANY (ARRAY['criacao'::"text", 'edicao'::"text"]))))),
+    CONSTRAINT "solicitacoes_mensagem_arquivamento_sem_publicacao_check" CHECK ((("tipo" = ANY (ARRAY['criacao'::"text", 'edicao'::"text"])) OR (("categoria_id_publicada" IS NULL) AND ("categoria_publicada" IS NULL) AND ("titulo_publicado" IS NULL) AND ("conteudo_publicado" IS NULL) AND ("tags_publicadas" IS NULL)))),
     CONSTRAINT "solicitacoes_mensagem_conteudo_check" CHECK ((("conteudo" IS NULL) OR ("char_length"("conteudo") <= 2000))),
+    CONSTRAINT "solicitacoes_mensagem_pendente_sem_revisao_check" CHECK ((("status" <> 'pendente'::"text") OR (("categoria_id_publicada" IS NULL) AND ("categoria_publicada" IS NULL) AND ("titulo_publicado" IS NULL) AND ("conteudo_publicado" IS NULL) AND ("tags_publicadas" IS NULL) AND ("comentario_revisao" IS NULL) AND ("ajustada" = false)))),
     CONSTRAINT "solicitacoes_mensagem_status_check" CHECK (("status" = ANY (ARRAY['pendente'::"text", 'aprovada'::"text", 'rejeitada'::"text"]))),
     CONSTRAINT "solicitacoes_mensagem_tipo_check" CHECK (("tipo" = ANY (ARRAY['criacao'::"text", 'edicao'::"text", 'arquivamento'::"text", 'exclusao'::"text"]))),
     CONSTRAINT "solicitacoes_mensagem_tipo_mensagem_ck" CHECK ((("status" <> 'pendente'::"text") OR (("tipo" = 'criacao'::"text") AND ("mensagem_id" IS NULL)) OR (("tipo" = ANY (ARRAY['edicao'::"text", 'arquivamento'::"text"])) AND ("mensagem_id" IS NOT NULL)))),
@@ -809,6 +910,21 @@ ALTER TABLE ONLY "public"."solicitacoes_mensagem"
 
 
 ALTER TABLE "public"."solicitacoes_mensagem"
+    ADD CONSTRAINT "solicitacoes_mensagem_publicada_completa_check" CHECK ((("status" <> 'aprovada'::"text") OR ("tipo" <> ALL (ARRAY['criacao'::"text", 'edicao'::"text"])) OR (("categoria_id_publicada" IS NOT NULL) AND ("categoria_publicada" IS NOT NULL) AND ("titulo_publicado" IS NOT NULL) AND ("conteudo_publicado" IS NOT NULL)))) NOT VALID;
+
+
+
+ALTER TABLE "public"."solicitacoes_mensagem"
+    ADD CONSTRAINT "solicitacoes_mensagem_rejeitada_comentario_check" CHECK ((("status" <> 'rejeitada'::"text") OR ("comentario_revisao" IS NOT NULL))) NOT VALID;
+
+
+
+ALTER TABLE "public"."solicitacoes_mensagem"
+    ADD CONSTRAINT "solicitacoes_mensagem_revisao_textos_check" CHECK (((("titulo_publicado" IS NULL) OR (("char_length"("btrim"("titulo_publicado")) >= 1) AND ("char_length"("btrim"("titulo_publicado")) <= 100))) AND (("conteudo_publicado" IS NULL) OR (("char_length"("btrim"("conteudo_publicado")) >= 1) AND ("char_length"("btrim"("conteudo_publicado")) <= 2000))) AND (("comentario_revisao" IS NULL) OR (("char_length"("btrim"("comentario_revisao")) >= 1) AND ("char_length"("btrim"("comentario_revisao")) <= 500))) AND "private"."request_tags_are_valid"("tags_publicadas"))) NOT VALID;
+
+
+
+ALTER TABLE "public"."solicitacoes_mensagem"
     ADD CONSTRAINT "solicitacoes_mensagem_tags_check" CHECK (("private"."request_tags_are_valid"("tags") AND "private"."request_tags_are_valid"("tags_anterior"))) NOT VALID;
 
 
@@ -842,6 +958,14 @@ CREATE INDEX "recentes_user_used_at_idx" ON "public"."recentes" USING "btree" ("
 
 
 CREATE INDEX "registros_atividade_acesso_created_idx" ON "public"."registros_atividade" USING "btree" ("acesso_id", "created_at" DESC);
+
+
+
+CREATE INDEX "solicitacoes_criado_em_idx" ON "public"."solicitacoes_mensagem" USING "btree" ("criado_em" DESC);
+
+
+
+CREATE INDEX "solicitacoes_solicitante_criado_em_idx" ON "public"."solicitacoes_mensagem" USING "btree" ("solicitado_por", "criado_em" DESC);
 
 
 
@@ -972,6 +1096,11 @@ ALTER TABLE ONLY "public"."solicitacoes_mensagem"
 
 ALTER TABLE ONLY "public"."solicitacoes_mensagem"
     ADD CONSTRAINT "solicitacoes_mensagem_categoria_id_fkey" FOREIGN KEY ("categoria_id") REFERENCES "public"."categorias"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."solicitacoes_mensagem"
+    ADD CONSTRAINT "solicitacoes_mensagem_categoria_id_publicada_fkey" FOREIGN KEY ("categoria_id_publicada") REFERENCES "public"."categorias"("id") ON DELETE RESTRICT;
 
 
 
@@ -1129,6 +1258,8 @@ CREATE POLICY "solicitacoes_select_own_or_superadmin" ON "public"."solicitacoes_
 
 
 
+
+
 GRANT USAGE ON SCHEMA "private" TO "authenticated";
 GRANT USAGE ON SCHEMA "private" TO "service_role";
 
@@ -1138,6 +1269,153 @@ GRANT USAGE ON SCHEMA "public" TO "postgres";
 GRANT USAGE ON SCHEMA "public" TO "anon";
 GRANT USAGE ON SCHEMA "public" TO "authenticated";
 GRANT USAGE ON SCHEMA "public" TO "service_role";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1159,12 +1437,13 @@ REVOKE ALL ON FUNCTION "private"."registrar_mudanca_administrativa"() FROM PUBLI
 
 REVOKE ALL ON FUNCTION "private"."request_tags_are_valid"("p_tags" "text"[]) FROM PUBLIC;
 GRANT ALL ON FUNCTION "private"."request_tags_are_valid"("p_tags" "text"[]) TO "authenticated";
+GRANT ALL ON FUNCTION "private"."request_tags_are_valid"("p_tags" "text"[]) TO "service_role";
 
 
 
-REVOKE ALL ON FUNCTION "public"."aprovar_solicitacao"("p_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."aprovar_solicitacao"("p_id" "uuid") TO "service_role";
-GRANT ALL ON FUNCTION "public"."aprovar_solicitacao"("p_id" "uuid") TO "authenticated";
+REVOKE ALL ON FUNCTION "public"."aprovar_solicitacao"("p_id" "uuid", "p_ajustes" "jsonb", "p_comentario" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."aprovar_solicitacao"("p_id" "uuid", "p_ajustes" "jsonb", "p_comentario" "text") TO "service_role";
+GRANT ALL ON FUNCTION "public"."aprovar_solicitacao"("p_id" "uuid", "p_ajustes" "jsonb", "p_comentario" "text") TO "authenticated";
 
 
 
@@ -1232,6 +1511,21 @@ GRANT ALL ON FUNCTION "public"."sincronizar_categoria_mensagem"() TO "service_ro
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 GRANT ALL ON TABLE "public"."acesso_membros" TO "service_role";
 GRANT SELECT,INSERT,DELETE ON TABLE "public"."acesso_membros" TO "authenticated";
 
@@ -1271,6 +1565,12 @@ GRANT SELECT,INSERT ON TABLE "public"."solicitacoes_mensagem" TO "authenticated"
 
 
 
+
+
+
+
+
+
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "postgres";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "service_role";
 
@@ -1289,3 +1589,34 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUN
 
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "postgres";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
