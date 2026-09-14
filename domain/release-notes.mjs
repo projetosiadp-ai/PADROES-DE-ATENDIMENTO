@@ -8,13 +8,12 @@ export const CURRENT_RELEASE = 'etapa-5';
 export const RELEASE_NOTES = Object.freeze({
   title: 'Novidades',
   release: CURRENT_RELEASE,
+  // Só o que muda no dia a dia de quem atende (2 a 3 frases, spec). As mudanças da Administração
+  // são explicadas diretamente aos superadministradores.
   items: Object.freeze([
-    'A Biblioteca está com o visual novo da DentalPlus: as categorias agora são botões logo abaixo da faixa azul.',
-    'Clicar em uma mensagem abre a leitura ao lado, sem copiar nada. Para copiar, use o botão Copiar.',
-    'Mensagens com [NOME], [DATA] ou outras variáveis mostram campos para preencher antes de “Copiar preenchida”; o que você digita não fica salvo.',
-    'Atalhos na Biblioteca: ↑ ↓ para navegar, Enter para copiar e E para solicitar edição.',
-    'Em “Suas solicitações” você acompanha cada pedido enviado: situação, comentário do administrador e, se ele ajustou o texto, o que você enviou ao lado do que foi publicado.',
-    'Na Administração, o superadministrador pode ajustar a sugestão antes de aprovar, comentar a decisão e consultar o histórico de solicitações com filtros.',
+    'A Biblioteca está com o visual novo. Clicar numa mensagem abre a leitura ao lado; para copiar, use o botão Copiar (ou Enter).',
+    'Mensagens com [NOME] ou [DATA] mostram campos para preencher antes de copiar.',
+    'Em “Suas solicitações” você acompanha a resposta de cada pedido que enviou.',
   ]),
   confirmLabel: 'Entendi',
 });
